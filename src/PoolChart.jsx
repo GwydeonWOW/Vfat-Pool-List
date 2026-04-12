@@ -1,27 +1,30 @@
 import { useEffect, useRef, useState } from 'react';
 import { createChart, CrosshairMode } from 'lightweight-charts';
-import { getOHLCV, TIMEFRAMES } from './api';
+import { getOHLCV, TIMEFRAMES, CHAINS } from './api';
 
-const TF_LABELS = {
-  minute: '1m',
-  hour: '1h',
-  day: '1d',
-};
-
-export default function PoolChart({ pool, networkId }) {
+export default function PoolChart({ pool }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
-  const candleSeriesRef = useRef(null);
-  const volumeSeriesRef = useRef(null);
   const [timeframe, setTimeframe] = useState('hour');
   const [ohlcvData, setOhlcvData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [chartError, setChartError] = useState(false);
 
-  // Fetch OHLCV data
+  const geckoNetworkId = CHAINS[pool.chainId]?.geckoNetworkId;
+
+  // Fetch OHLCV data from GeckoTerminal
   useEffect(() => {
+    if (!geckoNetworkId || !pool.poolAddr) {
+      setLoading(false);
+      setChartError(true);
+      return;
+    }
+
     let cancelled = false;
     setLoading(true);
-    getOHLCV(networkId, pool.address, timeframe)
+    setChartError(false);
+
+    getOHLCV(geckoNetworkId, pool.poolAddr, timeframe)
       .then((data) => {
         if (!cancelled) {
           setOhlcvData(data);
@@ -29,16 +32,19 @@ export default function PoolChart({ pool, networkId }) {
         }
       })
       .catch(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setChartError(true);
+        }
       });
+
     return () => { cancelled = true; };
-  }, [networkId, pool.address, timeframe]);
+  }, [geckoNetworkId, pool.poolAddr, timeframe]);
 
   // Create / update chart
   useEffect(() => {
     if (!containerRef.current || !ohlcvData || ohlcvData.length === 0) return;
 
-    // Clean up previous chart
     if (chartRef.current) {
       chartRef.current.remove();
       chartRef.current = null;
@@ -81,8 +87,6 @@ export default function PoolChart({ pool, networkId }) {
       wickDownColor: '#f85149',
     });
 
-    candleSeriesRef.current = candleSeries;
-
     const volumeSeries = chart.addHistogramSeries({
       color: '#58a6ff',
       priceFormat: { type: 'volume' },
@@ -93,18 +97,14 @@ export default function PoolChart({ pool, networkId }) {
       scaleMargins: { top: 0.8, bottom: 0 },
     });
 
-    volumeSeriesRef.current = volumeSeries;
-
-    // Transform OHLCV data
     const candles = [];
     const volumes = [];
 
     for (const [time, open, high, low, close, volume] of ohlcvData) {
       if (!time || !close) continue;
-      const t = time;
-      candles.push({ time: t, open, high, low, close });
+      candles.push({ time, open, high, low, close });
       volumes.push({
-        time: t,
+        time,
         value: volume || 0,
         color: close >= open ? 'rgba(63,185,80,0.3)' : 'rgba(248,81,73,0.3)',
       });
@@ -114,7 +114,6 @@ export default function PoolChart({ pool, networkId }) {
     volumeSeries.setData(volumes);
     chart.timeScale().fitContent();
 
-    // Resize observer
     const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
         const { width: w } = entry.contentRect;
@@ -130,18 +129,24 @@ export default function PoolChart({ pool, networkId }) {
     };
   }, [ohlcvData]);
 
+  const chainName = CHAINS[pool.chainId]?.name || `Chain ${pool.chainId}`;
+
   return (
     <div className="chart-container">
       <div className="chart-header">
         <div className="chart-meta">
-          <span><span className="label">Address:</span> {pool.address?.slice(0, 10)}...{pool.address?.slice(-8)}</span>
-          {pool.poolCreatedAt && (
-            <span><span className="label">Created:</span> {new Date(pool.poolCreatedAt).toLocaleDateString()}</span>
+          <span>
+            <span className="label">Pool:</span>{' '}
+            <code>{pool.poolAddr?.slice(0, 8)}...{pool.poolAddr?.slice(-6)}</code>
+          </span>
+          <span><span className="label">Chain:</span> {chainName}</span>
+          <span><span className="label">Protocol:</span> {pool.protocol}</span>
+          {pool.rewardTokens !== '(fees only)' && (
+            <span><span className="label">Rewards:</span> {pool.rewardTokens}</span>
           )}
-          <span><span className="label">MCap:</span> {formatUsd(pool.marketCapUsd)}</span>
         </div>
         <div className="timeframe-buttons">
-          {Object.entries(TF_LABELS).map(([key, label]) => (
+          {Object.entries(TIMEFRAMES).map(([key, label]) => (
             <button
               key={key}
               className={timeframe === key ? 'active' : ''}
@@ -154,20 +159,21 @@ export default function PoolChart({ pool, networkId }) {
       </div>
 
       {loading ? (
-        <div className="chart-loading">Loading chart data...</div>
-      ) : !ohlcvData || ohlcvData.length === 0 ? (
-        <div className="chart-loading">No chart data available</div>
+        <div className="chart-loading">Loading chart from GeckoTerminal...</div>
+      ) : chartError || !ohlcvData || ohlcvData.length === 0 ? (
+        <div className="chart-loading">
+          Chart data not available for this pool on GeckoTerminal
+          <br />
+          <small style={{ color: 'var(--text-muted)' }}>
+            Try viewing on{' '}
+            <a href={`https://vfat.io/yield`} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)' }}>
+              vfat.io
+            </a>
+          </small>
+        </div>
       ) : (
         <div className="chart-wrapper" ref={containerRef} />
       )}
     </div>
   );
-}
-
-function formatUsd(num) {
-  if (!num || num === 0) return '-';
-  if (num >= 1e9) return '$' + (num / 1e9).toFixed(2) + 'B';
-  if (num >= 1e6) return '$' + (num / 1e6).toFixed(2) + 'M';
-  if (num >= 1e3) return '$' + (num / 1e3).toFixed(2) + 'K';
-  return '$' + num.toFixed(2);
 }

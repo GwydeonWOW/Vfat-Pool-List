@@ -1,77 +1,166 @@
-const BASE = '/api';
+// ── VFat API (pool listing) ──
+const VFAT_BASE = '/vfat-api/v4/farms';
 
-async function fetchJSON(path) {
-  const res = await fetch(`${BASE}${path}`);
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
+// ── GeckoTerminal API (OHLCV charts only) ──
+const GECKO_BASE = '/gecko-api';
+
+// Chain ID -> { name, geckoNetworkId }
+export const CHAINS = {
+  8453: { name: 'Base', geckoNetworkId: 'base' },
+  56: { name: 'BSC', geckoNetworkId: 'bsc' },
+  1: { name: 'Ethereum', geckoNetworkId: 'eth' },
+  42161: { name: 'Arbitrum', geckoNetworkId: 'arbitrum' },
+  137: { name: 'Polygon', geckoNetworkId: 'polygon_pos' },
+  10: { name: 'Optimism', geckoNetworkId: 'optimism' },
+  43114: { name: 'Avalanche', geckoNetworkId: 'avalanche' },
+  250: { name: 'Fantom', geckoNetworkId: 'fantom' },
+  59144: { name: 'Linea', geckoNetworkId: 'linea' },
+};
+
+export const CL_TYPES = [
+  'AERO_SLIPSTREAM_GAUGE',
+  'PANCAKE_SWAP_V3',
+  'UNISWAP_V3',
+  'UNISWAP_V4',
+  'THENA_V3',
+  'BMX_V4_FARM',
+];
+
+export const MAJOR_TOKENS = [
+  'WETH', 'ETH', 'USDC', 'USDT', 'WBTC', 'cbBTC', 'tBTC', 'BTCB',
+  'WBNB', 'BNB', 'DAI', 'USD1',
+];
+
+async function fetchJSON(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`API error: ${res.status} ${res.statusText}`);
   return res.json();
 }
 
-export async function getNetworks() {
-  const data = await fetchJSON('/networks');
-  return data.data.map((n) => ({
-    id: n.id,
-    name: n.attributes.name,
-  }));
+/**
+ * Fetch farms from VFat API for a given chain.
+ * Returns raw array of farm objects.
+ */
+export async function fetchVFatFarms(chainId) {
+  return fetchJSON(`${VFAT_BASE}?chainId=${chainId}`);
 }
 
-export async function getTrendingPools(networkId) {
-  const data = await fetchJSON(`/networks/${networkId}/trending_pools`);
-  return data.data.map(normalizePool);
-}
+/**
+ * Parse a VFat farm into a normalized CL pool object.
+ * Returns null if not a CL pool or doesn't meet criteria.
+ */
+export function parsePool(farm, clTypes = CL_TYPES) {
+  const ftype = farm.type || '';
+  if (!clTypes.includes(ftype)) return null;
 
-export async function getPools(networkId, page = 1) {
-  const data = await fetchJSON(`/networks/${networkId}/pools?page=${page}`);
+  const pool = farm.pool || {};
+  const snap = farm.snapshot || {};
+  const tickSpacing = pool.tickSpacing;
+
+  if (!tickSpacing || tickSpacing <= 0) return null;
+
+  const apr = snap.apr;
+  if (apr == null || apr <= 0) return null;
+
+  const poolLiq = snap.poolLiquidity || 0;
+  const inRangeLiq = snap.inRangeLiquidity || 0;
+  const activeLiq = snap.activeLiquidity || 0;
+  const inRangeRatio = poolLiq > 0 ? (inRangeLiq / poolLiq * 100) : 0;
+
+  const underlying = pool.underlying || [];
+  const symbols = underlying.map((u) => u.symbol || '');
+  const stakingApr = snap.stakingApr || 0;
+  const lpApr = snap.lpApr || 0;
+  const maxApr = snap.maxApr || 0;
+  const rewardsWeek = snap.rewardsPerWeek || 0;
+
+  const rewardSyms = [];
+  for (const r of farm.rewards || []) {
+    if (r.rewardsPerSecond !== '0') {
+      rewardSyms.push(r.rewardToken?.symbol || '?');
+    }
+  }
+
+  const protocol = farm.protocol?.name || '?';
+
+  // Range percentage from tick spacing
+  const rangePct = parseFloat(((1.0001 ** tickSpacing - 1) * 100).toFixed(2));
+
+  // Build display name
+  const pair = symbols.join('/');
+  let vfname = pair;
+  if (ftype === 'AERO_SLIPSTREAM_GAUGE') vfname = `CL${tickSpacing}-${pair}`;
+  else if (ftype === 'PANCAKE_SWAP_V3') vfname = `${pair} (PCS V3)`;
+  else if (ftype === 'UNISWAP_V3') vfname = `${pair} (Uni V3)`;
+  else if (ftype === 'UNISWAP_V4') vfname = `${pair} (Uni V4)`;
+  else if (ftype === 'THENA_V3') vfname = `${pair} (Thena)`;
+  else if (ftype === 'BMX_V4_FARM') vfname = `${pair} (BMX V4)`;
+
   return {
-    pools: data.data.map(normalizePool),
-    hasNext: !!data.links?.next,
+    id: `${farm.chainId}-${farm.address}`,
+    chainId: farm.chainId,
+    protocol,
+    type: ftype,
+    pair,
+    vfname,
+    poolAddr: pool.address,
+    farmAddr: farm.address,
+    tickSpacing,
+    rangePct,
+    fee: pool.fee,
+    currentFee: pool.currentFee,
+    apr: parseFloat(apr.toFixed(2)),
+    stakingApr: parseFloat(stakingApr.toFixed(2)),
+    lpApr: parseFloat((lpApr || 0).toFixed(2)),
+    maxApr: parseFloat((maxApr || 0).toFixed(2)),
+    tvl: parseFloat(poolLiq.toFixed(2)),
+    inRangeLiquidity: parseFloat(inRangeLiq.toFixed(2)),
+    inRangeRatio: parseFloat(inRangeRatio.toFixed(1)),
+    activeLiquidity: parseFloat(activeLiq.toFixed(2)),
+    rewardsWeek: parseFloat(rewardsWeek.toFixed(2)),
+    rewardTokens: rewardSyms.length > 0 ? [...new Set(rewardSyms)].sort().join(', ') : '(fees only)',
+    hasGauge: stakingApr > 0,
+    underlying: underlying.map((u) => ({
+      symbol: u.symbol || '',
+      address: u.address || '',
+      price: u.price || 0,
+      name: u.name || '',
+    })),
   };
 }
 
-export async function getOHLCV(networkId, poolAddress, timeframe = 'hour') {
+/**
+ * Fetch all CL pools for multiple chains from VFat.
+ */
+export async function fetchAllPools(chainIds, clTypes = CL_TYPES) {
+  const allPools = [];
+
+  for (const chainId of chainIds) {
+    try {
+      const farms = await fetchVFatFarms(chainId);
+      for (const farm of farms) {
+        const pool = parsePool(farm, clTypes);
+        if (pool) allPools.push(pool);
+      }
+    } catch (err) {
+      console.error(`Error fetching chain ${chainId}:`, err);
+    }
+  }
+
+  return allPools;
+}
+
+// ── GeckoTerminal OHLCV ──
+
+export async function getOHLCV(geckoNetworkId, poolAddress, timeframe = 'hour') {
   const data = await fetchJSON(
-    `/networks/${networkId}/pools/${poolAddress}/ohlcv/${timeframe}?limit=168`
+    `${GECKO_BASE}/networks/${geckoNetworkId}/pools/${poolAddress}/ohlcv/${timeframe}?limit=168`
   );
-  // data.data.attributes.ohlcv_list is array of [timestamp, open, high, low, close, volume]
   return data.data?.attributes?.ohlcv_list || [];
 }
 
-function normalizePool(pool) {
-  const a = pool.attributes;
-  return {
-    id: pool.id,
-    address: a.address,
-    name: a.name,
-    poolCreatedAt: a.pool_created_at,
-    baseTokenPriceUsd: parseFloat(a.base_token_price_usd) || 0,
-    quoteTokenPriceUsd: parseFloat(a.quote_token_price_usd) || 0,
-    priceChangeM5: parseFloat(a.price_change_percentage?.m5) || 0,
-    priceChangeH1: parseFloat(a.price_change_percentage?.h1) || 0,
-    priceChangeH6: parseFloat(a.price_change_percentage?.h6) || 0,
-    priceChangeH24: parseFloat(a.price_change_percentage?.h24) || 0,
-    volumeUsdH24: parseFloat(a.volume_usd?.h24) || 0,
-    volumeUsdH6: parseFloat(a.volume_usd?.h6) || 0,
-    reserveInUsd: parseFloat(a.reserve_in_usd) || 0,
-    fdvUsd: parseFloat(a.fdv_usd) || 0,
-    marketCapUsd: parseFloat(a.market_cap_usd) || 0,
-    transactionsH24: a.transactions?.h24
-      ? (parseInt(a.transactions.h24.buys) || 0) + (parseInt(a.transactions.h24.sells) || 0)
-      : 0,
-    buysH24: parseInt(a.transactions?.h24?.buys) || 0,
-    sellsH24: parseInt(a.transactions?.h24?.sells) || 0,
-    baseToken: a.base_token_price_usd && pool.relationships?.base_token?.data
-      ? { address: pool.relationships.base_token.data.id.split('_')[0] }
-      : {},
-    quoteToken: pool.relationships?.quote_token?.data
-      ? { address: pool.relationships.quote_token.data.id.split('_')[0] }
-      : {},
-    dex: pool.relationships?.dex?.data?.id || '',
-    networkId: pool.relationships?.network?.data?.id || '',
-  };
-}
-
-// Map timeframe label to API timeframe param
 export const TIMEFRAMES = {
-  '1m': 'minute',
-  '1h': 'hour',
-  '1d': 'day',
+  minute: '1m',
+  hour: '1h',
+  day: '1d',
 };

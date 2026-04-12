@@ -1,19 +1,21 @@
 import { useState, useMemo } from 'react';
+import { CHAINS } from './api';
 import PoolChart from './PoolChart';
 
 const COLUMNS = [
   { key: 'expand', label: '', sortable: false },
-  { key: 'name', label: 'Pool', sortable: true },
-  { key: 'baseTokenPriceUsd', label: 'Price', sortable: true },
-  { key: 'priceChangeH24', label: '24h %', sortable: true },
-  { key: 'priceChangeH1', label: '1h %', sortable: true },
-  { key: 'volumeUsdH24', label: 'Volume 24h', sortable: true },
-  { key: 'reserveInUsd', label: 'TVL', sortable: true },
-  { key: 'transactionsH24', label: 'Txns 24h', sortable: true },
-  { key: 'fdvUsd', label: 'FDV', sortable: true },
+  { key: 'vfname', label: 'Pool', sortable: true },
+  { key: 'protocol', label: 'Protocol', sortable: true },
+  { key: 'apr', label: 'APR %', sortable: true },
+  { key: 'maxApr', label: 'Max APR', sortable: true },
+  { key: 'tvl', label: 'TVL', sortable: true },
+  { key: 'rangePct', label: 'Range %', sortable: true },
+  { key: 'tickSpacing', label: 'Tick', sortable: true },
+  { key: 'rewardsWeek', label: 'Rewards/wk', sortable: true },
+  { key: 'inRangeRatio', label: 'In-Range %', sortable: true },
 ];
 
-function formatNumber(num) {
+function formatUsd(num) {
   if (!num || num === 0) return '$0';
   if (num >= 1e9) return '$' + (num / 1e9).toFixed(2) + 'B';
   if (num >= 1e6) return '$' + (num / 1e6).toFixed(2) + 'M';
@@ -21,22 +23,21 @@ function formatNumber(num) {
   return '$' + num.toFixed(2);
 }
 
-function formatPrice(price) {
-  if (!price || price === 0) return '$0';
-  if (price < 0.00001) return '$' + price.toExponential(2);
-  if (price < 1) return '$' + price.toFixed(6);
-  if (price < 1000) return '$' + price.toFixed(4);
-  return '$' + price.toLocaleString(undefined, { maximumFractionDigits: 2 });
+function aprColor(apr) {
+  if (apr >= 500) return 'apr-extreme';
+  if (apr >= 200) return 'apr-high';
+  if (apr >= 50) return 'apr-mid';
+  return 'apr-low';
 }
 
-function formatPercent(pct) {
-  if (!pct && pct !== 0) return '-';
-  const sign = pct >= 0 ? '+' : '';
-  return sign + pct.toFixed(2) + '%';
+function ratioColor(ratio) {
+  if (ratio >= 70) return 'positive';
+  if (ratio >= 40) return 'ratio-mid';
+  return 'negative';
 }
 
-export default function PoolTable({ pools, networkId }) {
-  const [sortKey, setSortKey] = useState('volumeUsdH24');
+export default function PoolTable({ pools }) {
+  const [sortKey, setSortKey] = useState('apr');
   const [sortDir, setSortDir] = useState('desc');
   const [expandedId, setExpandedId] = useState(null);
 
@@ -44,6 +45,9 @@ export default function PoolTable({ pools, networkId }) {
     return [...pools].sort((a, b) => {
       const aVal = a[sortKey] || 0;
       const bVal = b[sortKey] || 0;
+      if (typeof aVal === 'string') {
+        return sortDir === 'desc' ? bVal.localeCompare(aVal) : aVal.localeCompare(bVal);
+      }
       return sortDir === 'desc' ? bVal - aVal : aVal - bVal;
     });
   }, [pools, sortKey, sortDir]);
@@ -87,6 +91,7 @@ export default function PoolTable({ pools, networkId }) {
       <tbody>
         {sortedPools.map((pool) => {
           const isExpanded = expandedId === pool.id;
+          const chainName = CHAINS[pool.chainId]?.name || `Chain ${pool.chainId}`;
           return (
             <>
               <tr
@@ -98,31 +103,32 @@ export default function PoolTable({ pools, networkId }) {
                   <span className={`expand-arrow${isExpanded ? ' open' : ''}`}>▶</span>
                 </td>
                 <td>
-                  <div className="pool-name">{pool.name || 'Unknown'}</div>
-                  <div className="pool-dex">{pool.dex}</div>
+                  <div className="pool-name">{pool.vfname || pool.pair}</div>
+                  <div className="pool-dex">
+                    {chainName}
+                    {pool.hasGauge ? ' 🏆' : ''}
+                  </div>
                 </td>
-                <td className="price">{formatPrice(pool.baseTokenPriceUsd)}</td>
-                <td className={pool.priceChangeH24 >= 0 ? 'positive' : 'negative'}>
-                  {formatPercent(pool.priceChangeH24)}
+                <td className="protocol">{pool.protocol}</td>
+                <td className={aprColor(pool.apr)}>
+                  <strong>{pool.apr}%</strong>
+                  {pool.stakingApr > 0 && (
+                    <div className="apr-detail">Staking: {pool.stakingApr}%</div>
+                  )}
                 </td>
-                <td className={pool.priceChangeH1 >= 0 ? 'positive' : 'negative'}>
-                  {formatPercent(pool.priceChangeH1)}
+                <td>{pool.maxApr > 0 ? `${pool.maxApr}%` : '-'}</td>
+                <td className="tvl">{formatUsd(pool.tvl)}</td>
+                <td className="range">{pool.rangePct}%</td>
+                <td>{pool.tickSpacing}</td>
+                <td>{formatUsd(pool.rewardsWeek)}</td>
+                <td className={ratioColor(pool.inRangeRatio)}>
+                  {pool.inRangeRatio}%
                 </td>
-                <td>{formatNumber(pool.volumeUsdH24)}</td>
-                <td>{formatNumber(pool.reserveInUsd)}</td>
-                <td>
-                  <span className="tx-info">
-                    <span className="tx-buys">{pool.buysH24}</span>
-                    {' / '}
-                    <span className="tx-sells">{pool.sellsH24}</span>
-                  </span>
-                </td>
-                <td>{formatNumber(pool.fdvUsd)}</td>
               </tr>
               {isExpanded && (
                 <tr key={`${pool.id}-chart`} className="chart-row">
                   <td colSpan={COLUMNS.length}>
-                    <PoolChart pool={pool} networkId={networkId} />
+                    <PoolChart pool={pool} />
                   </td>
                 </tr>
               )}
