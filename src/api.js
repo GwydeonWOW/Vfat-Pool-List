@@ -150,13 +150,51 @@ export async function fetchAllPools(chainIds, clTypes = CL_TYPES) {
   return allPools;
 }
 
-// ── GeckoTerminal OHLCV ──
+// ── GeckoTerminal OHLCV with rate limiting and cache ──
+
+const ohlcvCache = new Map();
+let lastGeckoRequest = 0;
+const MIN_GECKO_INTERVAL = 7000; // 7s between requests (max ~8/min, under 10/min limit)
+let geckoQueue = Promise.resolve();
+
+async function rateLimitedFetch(url) {
+  return geckoQueue = geckoQueue.then(() => {
+    const now = Date.now();
+    const wait = Math.max(0, lastGeckoRequest + MIN_GECKO_INTERVAL - now);
+    lastGeckoRequest = now + wait;
+    return new Promise((resolve) => setTimeout(resolve, wait));
+  }).then(() => fetch(url));
+}
 
 export async function getOHLCV(geckoNetworkId, poolAddress, timeframe = 'hour') {
-  const data = await fetchJSON(
-    `${GECKO_BASE}/networks/${geckoNetworkId}/pools/${poolAddress}/ohlcv/${timeframe}?limit=168`
-  );
-  return data.data?.attributes?.ohlcv_list || [];
+  const cacheKey = `${geckoNetworkId}-${poolAddress}-${timeframe}`;
+
+  // Return cached data if available
+  if (ohlcvCache.has(cacheKey)) {
+    return ohlcvCache.get(cacheKey);
+  }
+
+  try {
+    const res = await rateLimitedFetch(
+      `${GECKO_BASE}/networks/${geckoNetworkId}/pools/${poolAddress}/ohlcv/${timeframe}?limit=168`
+    );
+
+    if (res.status === 429) {
+      console.warn('GeckoTerminal rate limited');
+      return [];
+    }
+
+    if (!res.ok) return [];
+
+    const data = await res.json();
+    const ohlcv = data.data?.attributes?.ohlcv_list || [];
+    ohlcvCache.set(cacheKey, ohlcv);
+    return ohlcv;
+  } catch (err) {
+    // CORS errors from 429 also end up here
+    console.warn('GeckoTerminal request failed:', err.message);
+    return [];
+  }
 }
 
 export const TIMEFRAMES = {
