@@ -9,6 +9,7 @@ export default function App() {
   const [pools, setPools] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [search, setSearch] = useState('');
 
   // Filters
   const [minTvl, setMinTvl] = useState(5000);
@@ -51,8 +52,20 @@ export default function App() {
     );
   };
 
-  // Apply filters
+  // Apply search + filters
+  const searchLower = search.toLowerCase();
   const filteredPools = pools.filter((p) => {
+    // Search filter
+    if (searchLower) {
+      const haystack = [
+        p.vfname, p.pair, p.protocol, p.type,
+        ...p.underlying.map((u) => u.symbol),
+        p.poolAddr, p.farmAddr,
+        CHAINS[p.chainId]?.name,
+      ].join(' ').toLowerCase();
+      if (!haystack.includes(searchLower)) return false;
+    }
+    // Numeric filters
     if (p.tvl < minTvl) return false;
     if (p.tvl > maxTvl) return false;
     if (p.apr < minApr) return false;
@@ -78,6 +91,18 @@ export default function App() {
       </header>
 
       {/* Chain selector */}
+      <div className="search-bar">
+        <input
+          type="text"
+          placeholder="Search by token, pool name, protocol, or address..."
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          className="search-input"
+        />
+        {search && (
+          <button className="search-clear" onClick={() => setSearch('')}>✕</button>
+        )}
+      </div>
       <div className="chain-selector">
         <button onClick={toggleAllChains} className="chain-chip all-chip">
           {selectedChains.length === chainEntries.length ? 'Deselect All' : 'All Chains'}
