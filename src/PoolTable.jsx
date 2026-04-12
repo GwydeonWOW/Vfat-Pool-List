@@ -6,6 +6,7 @@ const COLUMNS = [
   { key: 'expand', label: '', sortable: false },
   { key: 'vfname', label: 'Pool', sortable: true },
   { key: 'protocol', label: 'Protocol', sortable: true },
+  { key: 'score', label: 'Score', sortable: true },
   { key: 'apr', label: 'APR %', sortable: true },
   { key: 'maxApr', label: 'Max APR', sortable: true },
   { key: 'tvl', label: 'TVL', sortable: true },
@@ -23,11 +24,63 @@ function formatUsd(num) {
   return '$' + num.toFixed(2);
 }
 
+/**
+ * Calculate risk-adjusted score:
+ * - Base = APR
+ * - Reward: high in-range ratio (stable position)
+ * - Reward: moderate range (not too wide, not too tight)
+ * - Reward: has gauge (staking rewards)
+ * - Reward: high rewards/week
+ * - Penalty: very low in-range ratio (position likely out of range)
+ */
+function calcScore(pool) {
+  let score = pool.apr;
+
+  // In-range ratio factor (0.0 to 1.0)
+  const inRangeFactor = pool.inRangeRatio / 100;
+  if (inRangeFactor >= 0.7) {
+    score *= 1.0;
+  } else if (inRangeFactor >= 0.4) {
+    score *= 0.7;
+  } else if (inRangeFactor >= 0.2) {
+    score *= 0.4;
+  } else {
+    score *= 0.15;
+  }
+
+  // Range factor: sweet spot is 1-5%
+  if (pool.rangePct >= 1 && pool.rangePct <= 5) {
+    score *= 1.1; // bonus
+  } else if (pool.rangePct > 10) {
+    score *= 0.8; // too wide = risky
+  }
+
+  // Gauge bonus (extra staking rewards = more sustainable)
+  if (pool.hasGauge) {
+    score *= 1.15;
+  }
+
+  // TVL factor: higher TVL = more established
+  if (pool.tvl >= 100000) {
+    score *= 1.1;
+  } else if (pool.tvl < 10000) {
+    score *= 0.8;
+  }
+
+  return parseFloat(score.toFixed(1));
+}
+
 function aprColor(apr) {
   if (apr >= 500) return 'apr-extreme';
   if (apr >= 200) return 'apr-high';
   if (apr >= 50) return 'apr-mid';
   return 'apr-low';
+}
+
+function scoreColor(score) {
+  if (score >= 200) return 'positive';
+  if (score >= 50) return 'apr-mid';
+  return 'score';
 }
 
 function ratioColor(ratio) {
@@ -59,12 +112,17 @@ function CopyAddr({ address, label }) {
 }
 
 export default function PoolTable({ pools }) {
-  const [sortKey, setSortKey] = useState('apr');
+  const [sortKey, setSortKey] = useState('score');
   const [sortDir, setSortDir] = useState('desc');
   const [expandedId, setExpandedId] = useState(null);
 
+  // Pre-calculate scores for all pools
+  const poolsWithScore = useMemo(() => {
+    return pools.map((p) => ({ ...p, score: calcScore(p) }));
+  }, [pools]);
+
   const sortedPools = useMemo(() => {
-    return [...pools].sort((a, b) => {
+    return [...poolsWithScore].sort((a, b) => {
       const aVal = a[sortKey] || 0;
       const bVal = b[sortKey] || 0;
       if (typeof aVal === 'string') {
@@ -72,7 +130,7 @@ export default function PoolTable({ pools }) {
       }
       return sortDir === 'desc' ? bVal - aVal : aVal - bVal;
     });
-  }, [pools, sortKey, sortDir]);
+  }, [poolsWithScore, sortKey, sortDir]);
 
   const handleSort = (key) => {
     if (key === sortKey) {
@@ -135,6 +193,9 @@ export default function PoolTable({ pools }) {
                   </div>
                 </td>
                 <td className="protocol">{pool.protocol}</td>
+                <td className={`score ${scoreColor(pool.score)}`}>
+                  <strong>{pool.score}</strong>
+                </td>
                 <td className={aprColor(pool.apr)}>
                   <strong>{pool.apr}%</strong>
                   {pool.stakingApr > 0 && (

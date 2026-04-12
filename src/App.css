@@ -394,23 +394,30 @@ body {
   font-size: 12px;
 }
 
-/* APR colors */
+/* APR colors - higher is better */
 .apr-extreme {
-  color: #ff6b6b;
+  color: #3fb950;
   font-weight: 700;
 }
 
 .apr-high {
-  color: var(--orange);
+  color: #56d364;
   font-weight: 600;
 }
 
 .apr-mid {
-  color: var(--green);
+  color: var(--orange);
 }
 
 .apr-low {
   color: var(--text-secondary);
+}
+
+/* Score column */
+.score {
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 13px;
+  font-weight: 600;
 }
 
 .apr-detail {
