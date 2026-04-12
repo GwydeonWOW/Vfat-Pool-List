@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, Fragment } from 'react';
 import { CHAINS } from './api';
 import PoolChart from './PoolChart';
 
@@ -93,9 +93,8 @@ export default function PoolTable({ pools }) {
           const isExpanded = expandedId === pool.id;
           const chainName = CHAINS[pool.chainId]?.name || `Chain ${pool.chainId}`;
           return (
-            <>
+            <Fragment key={pool.id}>
               <tr
-                key={pool.id}
                 className={`pool-row${isExpanded ? ' expanded' : ''}`}
                 onClick={() => toggleExpand(pool.id)}
               >
@@ -126,13 +125,13 @@ export default function PoolTable({ pools }) {
                 </td>
               </tr>
               {isExpanded && (
-                <tr key={`${pool.id}-chart`} className="chart-row">
+                <tr className="chart-row">
                   <td colSpan={COLUMNS.length}>
                     <PoolChart pool={pool} />
                   </td>
                 </tr>
               )}
-            </>
+            </Fragment>
           );
         })}
       </tbody>

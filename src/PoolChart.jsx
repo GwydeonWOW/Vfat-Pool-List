@@ -1,20 +1,22 @@
 import { useEffect, useRef, useState } from 'react';
 import { createChart, CrosshairMode } from 'lightweight-charts';
-import { getOHLCV, TIMEFRAMES, CHAINS } from './api';
+import { getTokenPriceHistory, getExoticToken, TIMEFRAMES, CHAINS, MAJOR_TOKENS } from './api';
 
 export default function PoolChart({ pool }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
-  const [timeframe, setTimeframe] = useState('hour');
-  const [ohlcvData, setOhlcvData] = useState(null);
+  const [timeframe, setTimeframe] = useState('day');
+  const [priceData, setPriceData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [chartError, setChartError] = useState(false);
 
-  const geckoNetworkId = CHAINS[pool.chainId]?.geckoNetworkId;
+  const exoticToken = getExoticToken(pool);
 
-  // Fetch OHLCV data from GeckoTerminal
+  const spanMap = { hour: 1, day: 24, week: 168 };
+
+  // Fetch price data from DeFiLlama
   useEffect(() => {
-    if (!geckoNetworkId || !pool.poolAddr) {
+    if (!exoticToken?.address) {
       setLoading(false);
       setChartError(true);
       return;
@@ -24,10 +26,10 @@ export default function PoolChart({ pool }) {
     setLoading(true);
     setChartError(false);
 
-    getOHLCV(geckoNetworkId, pool.poolAddr, timeframe)
+    getTokenPriceHistory(pool.chainId, exoticToken.address, spanMap[timeframe])
       .then((data) => {
         if (!cancelled) {
-          setOhlcvData(data);
+          setPriceData(data);
           setLoading(false);
         }
       })
@@ -39,13 +41,12 @@ export default function PoolChart({ pool }) {
       });
 
     return () => { cancelled = true; };
-  }, [geckoNetworkId, pool.poolAddr, timeframe]);
+  }, [pool.chainId, exoticToken?.address, timeframe]);
 
   // Create / update chart
   useEffect(() => {
-    if (!containerRef.current || !ohlcvData || ohlcvData.length === 0) return;
+    if (!containerRef.current || !priceData || priceData.length < 2) return;
 
-    // Clean up previous chart
     if (chartRef.current) {
       chartRef.current.remove();
       chartRef.current = null;
@@ -54,34 +55,10 @@ export default function PoolChart({ pool }) {
     const container = containerRef.current;
     const width = container.clientWidth;
 
-    // Filter and validate all OHLCV data before passing to chart
-    const candles = [];
-    const volumes = [];
-
-    for (const row of ohlcvData) {
-      if (!Array.isArray(row) || row.length < 5) continue;
-      const [time, open, high, low, close, volume] = row;
-      if (
-        !Number.isFinite(time) ||
-        !Number.isFinite(open) ||
-        !Number.isFinite(high) ||
-        !Number.isFinite(low) ||
-        !Number.isFinite(close)
-      ) continue;
-      candles.push({ time, open, high, low, close });
-      volumes.push({
-        time,
-        value: Number.isFinite(volume) ? volume : 0,
-        color: close >= open ? 'rgba(63,185,80,0.3)' : 'rgba(248,81,73,0.3)',
-      });
-    }
-
-    if (candles.length === 0) return;
-
     try {
       const chart = createChart(container, {
         width,
-        height: 350,
+        height: 300,
         layout: {
           background: { color: '#161b22' },
           textColor: '#8b949e',
@@ -104,27 +81,25 @@ export default function PoolChart({ pool }) {
 
       chartRef.current = chart;
 
-      const candleSeries = chart.addCandlestickSeries({
-        upColor: '#3fb950',
-        downColor: '#f85149',
-        borderUpColor: '#3fb950',
-        borderDownColor: '#f85149',
-        wickUpColor: '#3fb950',
-        wickDownColor: '#f85149',
+      // Find the first price for color calculation
+      const firstPrice = priceData[0]?.price || 0;
+      const lastPrice = priceData[priceData.length - 1]?.price || 0;
+      const lineColor = lastPrice >= firstPrice ? '#3fb950' : '#f85149';
+
+      const lineSeries = chart.addLineSeries({
+        color: lineColor,
+        lineWidth: 2,
+        priceLineVisible: true,
+        lastValueVisible: true,
       });
 
-      const volumeSeries = chart.addHistogramSeries({
-        color: '#58a6ff',
-        priceFormat: { type: 'volume' },
-        priceScaleId: '',
-      });
+      const formattedData = priceData
+        .filter((p) => p.time && Number.isFinite(p.price) && p.price > 0)
+        .map((p) => ({ time: p.time, value: p.price }));
 
-      volumeSeries.priceScale().applyOptions({
-        scaleMargins: { top: 0.8, bottom: 0 },
-      });
+      if (formattedData.length < 2) return;
 
-      candleSeries.setData(candles);
-      volumeSeries.setData(volumes);
+      lineSeries.setData(formattedData);
       chart.timeScale().fitContent();
 
       const ro = new ResizeObserver((entries) => {
@@ -144,23 +119,47 @@ export default function PoolChart({ pool }) {
       console.error('Chart render error:', err);
       setChartError(true);
     }
-  }, [ohlcvData]);
+  }, [priceData]);
 
   const chainName = CHAINS[pool.chainId]?.name || `Chain ${pool.chainId}`;
+
+  // Calculate price change
+  let priceChange = null;
+  if (priceData && priceData.length >= 2) {
+    const first = priceData[0].price;
+    const last = priceData[priceData.length - 1].price;
+    if (first > 0) {
+      priceChange = ((last - first) / first * 100).toFixed(2);
+    }
+  }
 
   return (
     <div className="chart-container">
       <div className="chart-header">
         <div className="chart-meta">
           <span>
-            <span className="label">Pool:</span>{' '}
-            <code>{pool.poolAddr?.slice(0, 8)}...{pool.poolAddr?.slice(-6)}</code>
+            <span className="label">Token:</span>{' '}
+            <strong>{exoticToken?.symbol || '?'}</strong>
+            {priceData?.length > 0 && (
+              <span style={{ marginLeft: 8, fontFamily: 'monospace', fontSize: 13 }}>
+                ${priceData[priceData.length - 1].price < 0.001
+                  ? priceData[priceData.length - 1].price.toExponential(3)
+                  : priceData[priceData.length - 1].price < 1
+                    ? priceData[priceData.length - 1].price.toFixed(6)
+                    : priceData[priceData.length - 1].price.toFixed(4)}
+              </span>
+            )}
+            {priceChange != null && (
+              <span
+                className={parseFloat(priceChange) >= 0 ? 'positive' : 'negative'}
+                style={{ marginLeft: 8, fontSize: 13 }}
+              >
+                {parseFloat(priceChange) >= 0 ? '+' : ''}{priceChange}%
+              </span>
+            )}
           </span>
           <span><span className="label">Chain:</span> {chainName}</span>
           <span><span className="label">Protocol:</span> {pool.protocol}</span>
-          {pool.rewardTokens !== '(fees only)' && (
-            <span><span className="label">Rewards:</span> {pool.rewardTokens}</span>
-          )}
         </div>
         <div className="timeframe-buttons">
           {Object.entries(TIMEFRAMES).map(([key, label]) => (
@@ -176,17 +175,10 @@ export default function PoolChart({ pool }) {
       </div>
 
       {loading ? (
-        <div className="chart-loading">Loading chart from GeckoTerminal...</div>
-      ) : chartError || !ohlcvData || ohlcvData.length === 0 ? (
+        <div className="chart-loading">Loading price data...</div>
+      ) : chartError || !priceData || priceData.length < 2 ? (
         <div className="chart-loading">
-          Chart data not available for this pool on GeckoTerminal
-          <br />
-          <small style={{ color: 'var(--text-muted)' }}>
-            Try viewing on{' '}
-            <a href={`https://vfat.io/yield`} target="_blank" rel="noreferrer" style={{ color: 'var(--blue)' }}>
-              vfat.io
-            </a>
-          </small>
+          No price data available for {exoticToken?.symbol || 'this token'}
         </div>
       ) : (
         <div className="chart-wrapper" ref={containerRef} />

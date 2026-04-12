@@ -1,20 +1,17 @@
 // ── VFat API (pool listing) ──
 const VFAT_BASE = 'https://api.vfat.io/v4/farms';
 
-// ── GeckoTerminal API (OHLCV charts only) ──
-const GECKO_BASE = 'https://api.geckoterminal.com/api/v2';
-
-// Chain ID -> { name, geckoNetworkId }
+// Chain ID -> { name, defiLlamaChain }
 export const CHAINS = {
-  8453: { name: 'Base', geckoNetworkId: 'base' },
-  56: { name: 'BSC', geckoNetworkId: 'bsc' },
-  1: { name: 'Ethereum', geckoNetworkId: 'eth' },
-  42161: { name: 'Arbitrum', geckoNetworkId: 'arbitrum' },
-  137: { name: 'Polygon', geckoNetworkId: 'polygon_pos' },
-  10: { name: 'Optimism', geckoNetworkId: 'optimism' },
-  43114: { name: 'Avalanche', geckoNetworkId: 'avalanche' },
-  250: { name: 'Fantom', geckoNetworkId: 'fantom' },
-  59144: { name: 'Linea', geckoNetworkId: 'linea' },
+  8453: { name: 'Base', defiLlamaChain: 'base' },
+  56: { name: 'BSC', defiLlamaChain: 'bsc' },
+  1: { name: 'Ethereum', defiLlamaChain: 'ethereum' },
+  42161: { name: 'Arbitrum', defiLlamaChain: 'arbitrum' },
+  137: { name: 'Polygon', defiLlamaChain: 'polygon' },
+  10: { name: 'Optimism', defiLlamaChain: 'optimism' },
+  43114: { name: 'Avalanche', defiLlamaChain: 'avax' },
+  250: { name: 'Fantom', defiLlamaChain: 'fantom' },
+  59144: { name: 'Linea', defiLlamaChain: 'linea' },
 };
 
 export const CL_TYPES = [
@@ -150,55 +147,59 @@ export async function fetchAllPools(chainIds, clTypes = CL_TYPES) {
   return allPools;
 }
 
-// ── GeckoTerminal OHLCV with rate limiting and cache ──
+// ── DeFiLlama price charts ──
 
-const ohlcvCache = new Map();
-let lastGeckoRequest = 0;
-const MIN_GECKO_INTERVAL = 7000; // 7s between requests (max ~8/min, under 10/min limit)
-let geckoQueue = Promise.resolve();
+const priceCache = new Map();
 
-async function rateLimitedFetch(url) {
-  return geckoQueue = geckoQueue.then(() => {
-    const now = Date.now();
-    const wait = Math.max(0, lastGeckoRequest + MIN_GECKO_INTERVAL - now);
-    lastGeckoRequest = now + wait;
-    return new Promise((resolve) => setTimeout(resolve, wait));
-  }).then(() => fetch(url));
+/**
+ * Find the "exotic" (non-major) token in a pool.
+ */
+export function getExoticToken(pool) {
+  for (const u of pool.underlying) {
+    if (!MAJOR_TOKENS.includes(u.symbol)) return u;
+  }
+  return pool.underlying[1] || pool.underlying[0] || null;
 }
 
-export async function getOHLCV(geckoNetworkId, poolAddress, timeframe = 'hour') {
-  const cacheKey = `${geckoNetworkId}-${poolAddress}-${timeframe}`;
+/**
+ * Fetch token price history from DeFiLlama.
+ * Returns array of { time, price } sorted by time.
+ */
+export async function getTokenPriceHistory(chainId, tokenAddress, spanHours = 24) {
+  const chainName = CHAINS[chainId]?.defiLlamaChain;
+  if (!chainName || !tokenAddress) return [];
 
-  // Return cached data if available
-  if (ohlcvCache.has(cacheKey)) {
-    return ohlcvCache.get(cacheKey);
-  }
+  const cacheKey = `${chainId}-${tokenAddress}-${spanHours}`;
+  if (priceCache.has(cacheKey)) return priceCache.get(cacheKey);
+
+  const period = spanHours <= 1 ? '5m' : spanHours <= 4 ? '15m' : '1h';
 
   try {
-    const res = await rateLimitedFetch(
-      `${GECKO_BASE}/networks/${geckoNetworkId}/pools/${poolAddress}/ohlcv/${timeframe}?limit=168`
+    const res = await fetch(
+      `https://coins.llama.fi/chart/${chainName}:${tokenAddress}?span=${spanHours}&period=${period}`
     );
-
-    if (res.status === 429) {
-      console.warn('GeckoTerminal rate limited');
-      return [];
-    }
-
     if (!res.ok) return [];
 
     const data = await res.json();
-    const ohlcv = data.data?.attributes?.ohlcv_list || [];
-    ohlcvCache.set(cacheKey, ohlcv);
-    return ohlcv;
+    const coinKey = `${chainName}:${tokenAddress}`;
+    const coinData = data.coins?.[coinKey];
+    if (!coinData?.prices) return [];
+
+    const prices = coinData.prices
+      .filter((p) => p.price && p.price > 0)
+      .map((p) => ({ time: p.timestamp, price: p.price }))
+      .sort((a, b) => a.time - b.time);
+
+    priceCache.set(cacheKey, prices);
+    return prices;
   } catch (err) {
-    // CORS errors from 429 also end up here
-    console.warn('GeckoTerminal request failed:', err.message);
+    console.warn('DeFiLlama request failed:', err.message);
     return [];
   }
 }
 
 export const TIMEFRAMES = {
-  minute: '1m',
   hour: '1h',
-  day: '1d',
+  day: '24h',
+  week: '7d',
 };
