@@ -1,8 +1,8 @@
 // ── VFat API (pool listing) ──
-const VFAT_BASE = '/vfat-api/v4/farms';
+const VFAT_BASE = 'https://api.vfat.io/v4/farms';
 
 // ── GeckoTerminal API (OHLCV charts only) ──
-const GECKO_BASE = '/gecko-api';
+const GECKO_BASE = 'https://api.geckoterminal.com/api/v2';
 
 // Chain ID -> { name, geckoNetworkId }
 export const CHAINS = {
