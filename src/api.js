@@ -163,6 +163,7 @@ export function getExoticToken(pool) {
 
 /**
  * Fetch token price history from DeFiLlama.
+ * Tries multiple period/span combos if the first returns no data.
  * Returns array of { time, price } sorted by time.
  */
 export async function getTokenPriceHistory(chainId, tokenAddress, spanHours = 24) {
@@ -172,30 +173,45 @@ export async function getTokenPriceHistory(chainId, tokenAddress, spanHours = 24
   const cacheKey = `${chainId}-${tokenAddress}-${spanHours}`;
   if (priceCache.has(cacheKey)) return priceCache.get(cacheKey);
 
-  const period = spanHours <= 1 ? '5m' : spanHours <= 4 ? '15m' : '1h';
-
-  try {
-    const res = await fetch(
-      `https://coins.llama.fi/chart/${chainName}:${tokenAddress}?span=${spanHours}&period=${period}`
-    );
-    if (!res.ok) return [];
-
-    const data = await res.json();
-    const coinKey = `${chainName}:${tokenAddress}`;
-    const coinData = data.coins?.[coinKey];
-    if (!coinData?.prices) return [];
-
-    const prices = coinData.prices
-      .filter((p) => p.price && p.price > 0)
-      .map((p) => ({ time: p.timestamp, price: p.price }))
-      .sort((a, b) => a.time - b.time);
-
-    priceCache.set(cacheKey, prices);
-    return prices;
-  } catch (err) {
-    console.warn('DeFiLlama request failed:', err.message);
-    return [];
+  // Try different period/span combos, from most granular to least
+  const attempts = [];
+  if (spanHours <= 1) {
+    attempts.push({ span: 1, period: '5m' }, { span: 2, period: '15m' }, { span: 4, period: '1h' });
+  } else if (spanHours <= 24) {
+    attempts.push({ span: 24, period: '1h' }, { span: 48, period: '1h' }, { span: 24, period: '4h' }, { span: 72, period: '4h' });
+  } else {
+    attempts.push({ span: 168, period: '4h' }, { span: 168, period: '1d' }, { span: 720, period: '1d' });
   }
+
+  for (const { span, period } of attempts) {
+    try {
+      const res = await fetch(
+        `https://coins.llama.fi/chart/${chainName}:${tokenAddress}?span=${span}&period=${period}`
+      );
+      if (!res.ok) continue;
+
+      const data = await res.json();
+      const coinKey = `${chainName}:${tokenAddress}`;
+      const coinData = data.coins?.[coinKey];
+      if (!coinData?.prices?.length) continue;
+
+      // Filter to only the requested time range
+      const cutoff = Date.now() / 1000 - spanHours * 3600;
+      const prices = coinData.prices
+        .filter((p) => p.price && p.price > 0 && p.timestamp >= cutoff)
+        .map((p) => ({ time: p.timestamp, price: p.price }))
+        .sort((a, b) => a.time - b.time);
+
+      if (prices.length >= 2) {
+        priceCache.set(cacheKey, prices);
+        return prices;
+      }
+    } catch {
+      continue;
+    }
+  }
+
+  return [];
 }
 
 export const TIMEFRAMES = {
