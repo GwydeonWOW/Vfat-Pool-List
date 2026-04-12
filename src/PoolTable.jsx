@@ -36,6 +36,28 @@ function ratioColor(ratio) {
   return 'negative';
 }
 
+function CopyAddr({ address, label }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = (e) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(address).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+
+  if (!address) return null;
+
+  return (
+    <span className="copy-addr" onClick={handleCopy} title={`Click to copy ${label}`}>
+      <span className="addr-label">{label}</span>
+      <code>{address.slice(0, 6)}...{address.slice(-4)}</code>
+      <span className="copy-icon">{copied ? '✓' : '📋'}</span>
+    </span>
+  );
+}
+
 export default function PoolTable({ pools }) {
   const [sortKey, setSortKey] = useState('apr');
   const [sortDir, setSortDir] = useState('desc');
@@ -106,6 +128,10 @@ export default function PoolTable({ pools }) {
                   <div className="pool-dex">
                     {chainName}
                     {pool.hasGauge ? ' 🏆' : ''}
+                  </div>
+                  <div className="pool-addrs">
+                    <CopyAddr address={pool.farmAddr} label="Farm" />
+                    <CopyAddr address={pool.poolAddr} label="Pool" />
                   </div>
                 </td>
                 <td className="protocol">{pool.protocol}</td>
