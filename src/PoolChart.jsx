@@ -101,11 +101,17 @@ export default function PoolChart({ pool }) {
     const volumes = [];
 
     for (const [time, open, high, low, close, volume] of ohlcvData) {
-      if (!time || open == null || high == null || low == null || close == null) continue;
+      if (
+        !time ||
+        !Number.isFinite(open) ||
+        !Number.isFinite(high) ||
+        !Number.isFinite(low) ||
+        !Number.isFinite(close)
+      ) continue;
       candles.push({ time, open, high, low, close });
       volumes.push({
         time,
-        value: volume || 0,
+        value: Number.isFinite(volume) ? volume : 0,
         color: close >= open ? 'rgba(63,185,80,0.3)' : 'rgba(248,81,73,0.3)',
       });
     }
