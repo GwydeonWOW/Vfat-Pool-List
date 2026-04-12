@@ -101,7 +101,7 @@ export default function PoolChart({ pool }) {
     const volumes = [];
 
     for (const [time, open, high, low, close, volume] of ohlcvData) {
-      if (!time || !close) continue;
+      if (!time || open == null || high == null || low == null || close == null) continue;
       candles.push({ time, open, high, low, close });
       volumes.push({
         time,
