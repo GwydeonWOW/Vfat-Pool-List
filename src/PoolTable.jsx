@@ -50,9 +50,9 @@ function calcScore(pool) {
 
   // Range factor: sweet spot is 1-5%
   if (pool.rangePct >= 1 && pool.rangePct <= 5) {
-    score *= 1.1; // bonus
+    score *= 1.1;
   } else if (pool.rangePct > 10) {
-    score *= 0.8; // too wide = risky
+    score *= 0.8;
   }
 
   // Gauge bonus (extra staking rewards = more sustainable)
@@ -65,6 +65,16 @@ function calcScore(pool) {
     score *= 1.1;
   } else if (pool.tvl < 10000) {
     score *= 0.8;
+  }
+
+  // Max APR factor: rewards potential when in tight range
+  const maxApr = pool.maxApr || 0;
+  if (maxApr > 4800) {
+    score *= 1.3; // high ceiling = great potential
+  } else if (maxApr > 3200) {
+    score *= 1.0; // good range, no change
+  } else if (maxApr > 0) {
+    score *= 0.7; // low max = limited upside
   }
 
   return parseFloat(score.toFixed(1));
