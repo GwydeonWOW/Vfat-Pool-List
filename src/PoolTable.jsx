@@ -14,6 +14,7 @@ const COLUMNS = [
   { key: 'tickSpacing', label: 'Tick', sortable: true },
   { key: 'rewardsWeek', label: 'Rewards/wk', sortable: true },
   { key: 'inRangeRatio', label: 'In-Range %', sortable: true },
+  { key: 'rsi', label: 'RSI', sortable: true },
 ];
 
 function formatUsd(num) {
@@ -99,6 +100,13 @@ function ratioColor(ratio) {
   return 'negative';
 }
 
+function rsiColor(rsi) {
+  if (rsi == null) return '';
+  if (rsi >= 70) return 'rsi-high';
+  if (rsi <= 30) return 'rsi-low';
+  return 'rsi-mid';
+}
+
 function CopyAddr({ address, label }) {
   const [copied, setCopied] = useState(false);
 
@@ -121,20 +129,24 @@ function CopyAddr({ address, label }) {
   );
 }
 
-export default function PoolTable({ pools }) {
+export default function PoolTable({ pools, rsiData }) {
   const [sortKey, setSortKey] = useState('score');
   const [sortDir, setSortDir] = useState('desc');
   const [expandedId, setExpandedId] = useState(null);
 
-  // Pre-calculate scores for all pools
+  // Pre-calculate scores and attach RSI for all pools
   const poolsWithScore = useMemo(() => {
-    return pools.map((p) => ({ ...p, score: calcScore(p) }));
-  }, [pools]);
+    return pools.map((p) => ({
+      ...p,
+      score: calcScore(p),
+      rsi: rsiData?.get(p.id) ?? null,
+    }));
+  }, [pools, rsiData]);
 
   const sortedPools = useMemo(() => {
     return [...poolsWithScore].sort((a, b) => {
-      const aVal = a[sortKey] || 0;
-      const bVal = b[sortKey] || 0;
+      const aVal = a[sortKey] ?? 0;
+      const bVal = b[sortKey] ?? 0;
       if (typeof aVal === 'string') {
         return sortDir === 'desc' ? bVal.localeCompare(aVal) : aVal.localeCompare(bVal);
       }
@@ -219,6 +231,9 @@ export default function PoolTable({ pools }) {
                 <td>{formatUsd(pool.rewardsWeek)}</td>
                 <td className={ratioColor(pool.inRangeRatio)}>
                   {pool.inRangeRatio}%
+                </td>
+                <td className={`rsi ${rsiColor(pool.rsi)}`}>
+                  {pool.rsi != null ? pool.rsi : '-'}
                 </td>
               </tr>
               {isExpanded && (

@@ -493,6 +493,25 @@ body {
   font-size: 13px;
 }
 
+/* RSI colors */
+.rsi {
+  font-family: 'SF Mono', 'Consolas', monospace;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.rsi-high {
+  color: var(--green);
+}
+
+.rsi-mid {
+  color: var(--orange);
+}
+
+.rsi-low {
+  color: var(--red);
+}
+
 /* Loading / Error */
 .loading,
 .error {
