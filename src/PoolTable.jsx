@@ -28,14 +28,21 @@ function formatUsd(num) {
 /**
  * Calculate risk-adjusted score:
  * - Base = APR
+ * - Big bonus: real farm rewards (not just LP fees)
  * - Reward: high in-range ratio (stable position)
  * - Reward: moderate range (not too wide, not too tight)
  * - Reward: has gauge (staking rewards)
- * - Reward: high rewards/week
  * - Penalty: very low in-range ratio (position likely out of range)
  */
 function calcScore(pool) {
   let score = pool.apr;
+
+  // Real rewards bonus: farms with actual token incentives are far more attractive
+  if (pool.hasRealRewards) {
+    score *= 1.5;
+  } else {
+    score *= 0.6; // fees-only pools get heavily penalized
+  }
 
   // In-range ratio factor (0.0 to 1.0)
   const inRangeFactor = pool.inRangeRatio / 100;

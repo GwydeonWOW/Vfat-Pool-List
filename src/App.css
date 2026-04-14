@@ -226,7 +226,8 @@ body {
 
 .pool-table {
   width: 100%;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   background: var(--bg-secondary);
 }
 
@@ -249,6 +250,7 @@ body {
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
+  box-shadow: 0 2px 0 var(--border);
 }
 
 .pool-table th:hover {
@@ -305,6 +307,7 @@ body {
 .chart-row td {
   padding: 0 !important;
   border-bottom: 1px solid var(--border);
+  position: relative;
 }
 
 .chart-container {
