@@ -3,6 +3,35 @@ import { CHAINS, fetchAllPools, batchFetchRSI } from './api';
 import PoolTable from './PoolTable';
 
 const chainEntries = Object.entries(CHAINS);
+const CACHE_KEY = 'vfat_pools_cache';
+const CACHE_TTL = 15 * 60 * 1000; // 15 minutes
+
+function loadCache(chainIds) {
+  try {
+    const raw = localStorage.getItem(CACHE_KEY);
+    if (!raw) return null;
+    const cache = JSON.parse(raw);
+    const sorted = [...chainIds].sort().join(',');
+    const cached = [...(cache.chainIds || [])].sort().join(',');
+    if (cached !== sorted) return null;
+    if (Date.now() - cache.timestamp > CACHE_TTL) return null;
+    return cache;
+  } catch {
+    return null;
+  }
+}
+
+function saveCache(chainIds, pools) {
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify({
+      timestamp: Date.now(),
+      chainIds,
+      pools,
+    }));
+  } catch {
+    // localStorage full or unavailable
+  }
+}
 
 export default function App() {
   const [selectedChains, setSelectedChains] = useState([8453, 56, 43114, 146]);
@@ -12,7 +41,9 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [rsiData, setRsiData] = useState(new Map());
   const [rsiLoading, setRsiLoading] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState(null);
   const rsiAbortRef = useRef(false);
+  const refreshTimerRef = useRef(null);
 
   // Filters
   const [minTvl, setMinTvl] = useState(5000);
@@ -23,19 +54,71 @@ export default function App() {
   const [minRewardsWeek, setMinRewardsWeek] = useState(1000);
   const [showFilters, setShowFilters] = useState(false);
 
-  const loadPools = useCallback(async (chains) => {
+  const loadPools = useCallback(async (chains, forceRefresh = false) => {
     setLoading(true);
     setError(null);
     setRsiData(new Map());
-    rsiAbortRef.current = true; // cancel any running RSI fetch
+    rsiAbortRef.current = true;
+
+    // Clear any existing refresh timer
+    if (refreshTimerRef.current) {
+      clearInterval(refreshTimerRef.current);
+      refreshTimerRef.current = null;
+    }
+
     try {
+      // Try cache first unless forced
+      if (!forceRefresh) {
+        const cached = loadCache(chains);
+        if (cached) {
+          setPools(cached.pools);
+          setLastUpdated(cached.timestamp);
+          setLoading(false);
+          startRefreshTimer(chains);
+          return;
+        }
+      }
+
       const data = await fetchAllPools(chains);
       setPools(data);
+      setLastUpdated(Date.now());
+      saveCache(chains, data);
     } catch (err) {
       setError(err.message);
     } finally {
       setLoading(false);
     }
+
+    startRefreshTimer(chains);
+  }, []);
+
+  const startRefreshTimer = useCallback((chains) => {
+    if (refreshTimerRef.current) {
+      clearInterval(refreshTimerRef.current);
+    }
+    refreshTimerRef.current = setInterval(() => {
+      refreshPools(chains);
+    }, CACHE_TTL);
+  }, []);
+
+  const refreshPools = useCallback(async (chains) => {
+    try {
+      const data = await fetchAllPools(chains);
+      setPools(data);
+      setLastUpdated(Date.now());
+      saveCache(chains, data);
+    } catch (err) {
+      console.error('Auto-refresh failed:', err);
+    }
+  }, []);
+
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (refreshTimerRef.current) {
+        clearInterval(refreshTimerRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -81,6 +164,15 @@ export default function App() {
     );
   };
 
+  const timeSinceUpdate = () => {
+    if (!lastUpdated) return '';
+    const secs = Math.floor((Date.now() - lastUpdated) / 1000);
+    if (secs < 60) return `${secs}s ago`;
+    const mins = Math.floor(secs / 60);
+    if (mins < 60) return `${mins}m ago`;
+    return `${Math.floor(mins / 60)}h ago`;
+  };
+
   // Apply search + filters
   const searchLower = search.toLowerCase();
   const filteredPools = pools.filter((p) => {
@@ -110,7 +202,7 @@ export default function App() {
       <header className="header">
         <h1>VFat Pool Analyzer</h1>
         <div className="controls">
-          <button onClick={() => loadPools(selectedChains)} disabled={loading} className="refresh-btn">
+          <button onClick={() => loadPools(selectedChains, true)} disabled={loading} className="refresh-btn">
             {loading ? 'Loading...' : 'Refresh'}
           </button>
           <button onClick={() => setShowFilters(!showFilters)} className="filter-toggle-btn">
@@ -185,6 +277,9 @@ export default function App() {
         {loading
           ? `Loading pools for ${selectedChains.map((c) => CHAINS[c]?.name).join(', ')}...`
           : `${poolCount} pools found (of ${pools.length} total)${rsiLoading ? ' | Loading RSI...' : ` | RSI: ${rsiData.size} pools`}`}
+        {lastUpdated && !loading && (
+          <span className="last-updated"> | Updated {timeSinceUpdate()}</span>
+        )}
       </div>
 
       {loading && pools.length === 0 ? (
