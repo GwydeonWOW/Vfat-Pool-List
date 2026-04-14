@@ -53,7 +53,8 @@ export async function fetchTurbosPools() {
  * Trigger a manual refresh on the backend.
  */
 export async function refreshBackend(source) {
-  const res = await fetch(`${API_BASE}/refresh/${source}`, { method: 'POST' });
+  const res = await fetch(`${API_BASE}/refresh/${source}`);
+  if (!res.ok) throw new Error(`Refresh failed: ${res.status}`);
   return res.json();
 }
 

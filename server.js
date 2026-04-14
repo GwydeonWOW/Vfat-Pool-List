@@ -322,8 +322,8 @@ app.get('/api/status', (req, res) => {
   });
 });
 
-// Manual refresh endpoint
-app.post('/api/refresh/:source', async (req, res) => {
+// Manual refresh endpoint (GET to avoid reverse proxy POST issues)
+app.get('/api/refresh/:source', async (req, res) => {
   const source = req.params.source;
   try {
     let result;
