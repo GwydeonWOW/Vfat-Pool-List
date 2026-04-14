@@ -1,10 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { CHAINS, fetchAllPools, batchFetchRSI } from './api';
-import { fetchRaydiumPools } from './raydiumApi';
-import { fetchTurbosPools } from './turbosApi';
+import { CHAINS, fetchAllPools, fetchRaydiumPools, fetchTurbosPools, refreshBackend } from './api';
+import { batchFetchRSI } from './api';
 import PoolTable, { VFAT_COLUMNS, RAYDIUM_COLUMNS, TURBOS_COLUMNS } from './PoolTable';
-
-const CACHE_TTL = 15 * 60 * 1000; // 15 minutes
 
 const TABS = [
   { key: 'vfat', label: 'VFat' },
@@ -12,51 +9,27 @@ const TABS = [
   { key: 'turbos', label: 'Turbos Finance' },
 ];
 
-function loadCache(tabKey) {
-  try {
-    const raw = localStorage.getItem(`vfat_cache_${tabKey}`);
-    if (!raw) return null;
-    const cache = JSON.parse(raw);
-    if (Date.now() - cache.timestamp > CACHE_TTL) return null;
-    return cache;
-  } catch {
-    return null;
-  }
-}
-
-function saveCache(tabKey, data) {
-  try {
-    localStorage.setItem(`vfat_cache_${tabKey}`, JSON.stringify({
-      timestamp: Date.now(),
-      data,
-    }));
-  } catch {
-    // localStorage full
-  }
-}
-
 const chainEntries = Object.entries(CHAINS);
 
 export default function App() {
   const [activeTab, setActiveTab] = useState('vfat');
 
-  // VFat state
-  const [selectedChains, setSelectedChains] = useState([8453, 56, 43114, 146]);
+  // Data
   const [vfatPools, setVfatPools] = useState([]);
+  const [raydiumPools, setRaydiumPools] = useState([]);
+  const [turbosPools, setTurbosPools] = useState([]);
   const [rsiData, setRsiData] = useState(new Map());
   const [rsiLoading, setRsiLoading] = useState(false);
 
-  // Raydium state
-  const [raydiumPools, setRaydiumPools] = useState([]);
-
-  // Turbos state
-  const [turbosPools, setTurbosPools] = useState([]);
-
-  // Shared state
+  // UI state
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
   const [lastUpdated, setLastUpdated] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // VFat chain filter
+  const [selectedChains, setSelectedChains] = useState([8453, 56, 43114, 146]);
 
   // Filters
   const [minTvl, setMinTvl] = useState(5000);
@@ -68,57 +41,26 @@ export default function App() {
   const [showFilters, setShowFilters] = useState(false);
 
   const rsiAbortRef = useRef(false);
-  const refreshTimerRef = useRef(null);
 
-  // ── Data loading ──
+  // ── Load from backend ──
 
-  const loadVfat = useCallback(async (forceRefresh = false) => {
+  const loadData = useCallback(async (tab) => {
     setLoading(true);
     setError(null);
-    setRsiData(new Map());
-    rsiAbortRef.current = true;
-
-    if (!forceRefresh) {
-      const cached = loadCache('vfat');
-      if (cached) {
-        setVfatPools(cached.data);
-        setLastUpdated(cached.timestamp);
-        setLoading(false);
-        return;
-      }
-    }
-
     try {
-      const data = await fetchAllPools(selectedChains);
-      setVfatPools(data);
-      setLastUpdated(Date.now());
-      saveCache('vfat', data);
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setLoading(false);
-    }
-  }, [selectedChains]);
-
-  const loadRaydium = useCallback(async (forceRefresh = false) => {
-    setLoading(true);
-    setError(null);
-
-    if (!forceRefresh) {
-      const cached = loadCache('raydium');
-      if (cached) {
-        setRaydiumPools(cached.data);
-        setLastUpdated(cached.timestamp);
-        setLoading(false);
-        return;
+      let pools;
+      if (tab === 'vfat') {
+        pools = await fetchAllPools();
+        setVfatPools(pools);
+      } else if (tab === 'raydium') {
+        pools = await fetchRaydiumPools();
+        setRaydiumPools(pools);
+      } else {
+        pools = await fetchTurbosPools();
+        setTurbosPools(pools);
       }
-    }
-
-    try {
-      const data = await fetchRaydiumPools('concentrated', 5);
-      setRaydiumPools(data);
+      // Use backend timestamp as lastUpdated
       setLastUpdated(Date.now());
-      saveCache('raydium', data);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -126,66 +68,33 @@ export default function App() {
     }
   }, []);
 
-  const loadTurbos = useCallback(async (forceRefresh = false) => {
-    setLoading(true);
-    setError(null);
-
-    if (!forceRefresh) {
-      const cached = loadCache('turbos');
-      if (cached) {
-        setTurbosPools(cached.data);
-        setLastUpdated(cached.timestamp);
-        setLoading(false);
-        return;
-      }
-    }
-
+  const handleRefresh = async () => {
+    setRefreshing(true);
     try {
-      const data = await fetchTurbosPools(7);
-      setTurbosPools(data);
-      setLastUpdated(Date.now());
-      saveCache('turbos', data);
+      await refreshBackend(activeTab);
+      await loadData(activeTab);
     } catch (err) {
       setError(err.message);
     } finally {
-      setLoading(false);
+      setRefreshing(false);
     }
-  }, []);
+  };
 
   // Load data on tab change
   useEffect(() => {
     setSearch('');
     setError(null);
-    if (refreshTimerRef.current) {
-      clearInterval(refreshTimerRef.current);
-      refreshTimerRef.current = null;
-    }
+    loadData(activeTab);
+  }, [activeTab, loadData]);
 
-    if (activeTab === 'vfat') loadVfat();
-    else if (activeTab === 'raydium') loadRaydium();
-    else if (activeTab === 'turbos') loadTurbos();
-
-    // Auto-refresh every 15 min
-    refreshTimerRef.current = setInterval(() => {
-      if (activeTab === 'vfat') loadVfat(true);
-      else if (activeTab === 'raydium') loadRaydium(true);
-      else if (activeTab === 'turbos') loadTurbos(true);
-    }, CACHE_TTL);
-
-    return () => {
-      if (refreshTimerRef.current) clearInterval(refreshTimerRef.current);
-    };
-  }, [activeTab, loadVfat, loadRaydium, loadTurbos]);
-
-  // Reload VFat when chains change
+  // Filter VFat pools when chain selection changes
   useEffect(() => {
-    if (activeTab === 'vfat') loadVfat();
+    if (activeTab === 'vfat') loadData('vfat');
   }, [selectedChains]);
 
   // RSI fetch for VFat
   useEffect(() => {
     if (activeTab !== 'vfat' || loading || vfatPools.length === 0) return;
-
     rsiAbortRef.current = false;
     const aborted = () => rsiAbortRef.current;
 
@@ -200,17 +109,10 @@ export default function App() {
         setRsiLoading(false);
       }
     });
-
     return () => { rsiAbortRef.current = true; };
   }, [vfatPools, loading, activeTab]);
 
-  const handleRefresh = () => {
-    if (activeTab === 'vfat') loadVfat(true);
-    else if (activeTab === 'raydium') loadRaydium(true);
-    else if (activeTab === 'turbos') loadTurbos(true);
-  };
-
-  // ── Chain toggles (VFat only) ──
+  // ── Chain toggles ──
 
   const toggleChain = (chainId) => {
     setSelectedChains((prev) =>
@@ -224,27 +126,15 @@ export default function App() {
     );
   };
 
-  // ── Time display ──
+  // ── Filters ──
 
-  const timeSinceUpdate = () => {
-    if (!lastUpdated) return '';
-    const secs = Math.floor((Date.now() - lastUpdated) / 1000);
-    if (secs < 60) return `${secs}s ago`;
-    const mins = Math.floor(secs / 60);
-    if (mins < 60) return `${mins}m ago`;
-    return `${Math.floor(mins / 60)}h ago`;
-  };
+  const currentPools = activeTab === 'vfat'
+    ? vfatPools.filter((p) => selectedChains.includes(p.chainId))
+    : activeTab === 'raydium' ? raydiumPools : turbosPools;
 
-  // ── Current pools and filters ──
-
-  const currentPools = activeTab === 'vfat' ? vfatPools
-    : activeTab === 'raydium' ? raydiumPools
-    : turbosPools;
-
-  // Adjust default filters per source
   const effectiveMinApr = activeTab === 'vfat' ? minApr : 0;
-
   const searchLower = search.toLowerCase();
+
   const filteredPools = currentPools.filter((p) => {
     if (searchLower) {
       const haystack = [
@@ -263,20 +153,16 @@ export default function App() {
   });
 
   const poolCount = filteredPools.length;
-
-  // ── Tab-specific columns ──
-
   const currentColumns = activeTab === 'vfat' ? VFAT_COLUMNS
-    : activeTab === 'raydium' ? RAYDIUM_COLUMNS
-    : TURBOS_COLUMNS;
+    : activeTab === 'raydium' ? RAYDIUM_COLUMNS : TURBOS_COLUMNS;
 
   return (
     <div className="app">
       <header className="header">
         <h1>VFat Pool Analyzer</h1>
         <div className="controls">
-          <button onClick={handleRefresh} disabled={loading} className="refresh-btn">
-            {loading ? 'Loading...' : 'Refresh'}
+          <button onClick={handleRefresh} disabled={loading || refreshing} className="refresh-btn">
+            {refreshing ? 'Refreshing...' : loading ? 'Loading...' : 'Refresh'}
           </button>
           <button onClick={() => setShowFilters(!showFilters)} className="filter-toggle-btn">
             Filters {showFilters ? '▲' : '▼'}
@@ -306,9 +192,7 @@ export default function App() {
           onChange={(e) => setSearch(e.target.value)}
           className="search-input"
         />
-        {search && (
-          <button className="search-clear" onClick={() => setSearch('')}>✕</button>
-        )}
+        {search && <button className="search-clear" onClick={() => setSearch('')}>✕</button>}
       </div>
 
       {/* Chain selector (VFat only) */}
@@ -374,20 +258,12 @@ export default function App() {
         {activeTab === 'vfat' && !loading && (
           <span>{rsiLoading ? ' | Loading RSI...' : ` | RSI: ${rsiData.size} pools`}</span>
         )}
-        {lastUpdated && !loading && (
-          <span className="last-updated"> | Updated {timeSinceUpdate()}</span>
-        )}
       </div>
 
       {loading && currentPools.length === 0 ? (
-        <div className="loading">Fetching pools...</div>
+        <div className="loading">Fetching pools from server cache...</div>
       ) : (
-        <PoolTable
-          pools={filteredPools}
-          columns={currentColumns}
-          rsiData={rsiData}
-          source={activeTab}
-        />
+        <PoolTable pools={filteredPools} columns={currentColumns} rsiData={rsiData} source={activeTab} />
       )}
     </div>
   );
