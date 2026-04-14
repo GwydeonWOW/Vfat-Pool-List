@@ -128,9 +128,10 @@ export default function App() {
 
   // ── Filters ──
 
-  const currentPools = activeTab === 'vfat'
-    ? vfatPools.filter((p) => selectedChains.includes(p.chainId))
-    : activeTab === 'raydium' ? raydiumPools : turbosPools;
+  const currentPools = loading ? []
+    : activeTab === 'vfat'
+      ? vfatPools.filter((p) => selectedChains.includes(p.chainId))
+      : activeTab === 'raydium' ? raydiumPools : turbosPools;
 
   const effectiveMinApr = activeTab === 'vfat' ? minApr : 0;
   const searchLower = search.toLowerCase();
@@ -260,7 +261,7 @@ export default function App() {
         )}
       </div>
 
-      {loading && currentPools.length === 0 ? (
+      {loading ? (
         <div className="loading">Fetching pools from server cache...</div>
       ) : (
         <PoolTable pools={filteredPools} columns={currentColumns} rsiData={rsiData} source={activeTab} />
