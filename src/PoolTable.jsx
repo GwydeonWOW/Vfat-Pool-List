@@ -228,7 +228,17 @@ export default function PoolTable({ pools, rsiData }) {
                 <td className="tvl">{formatUsd(pool.tvl)}</td>
                 <td className="range">{pool.rangePct}%</td>
                 <td>{pool.tickSpacing}</td>
-                <td>{formatUsd(pool.rewardsWeek)}</td>
+                <td>
+                  <div>{formatUsd(pool.rewardsWeek)}</div>
+                  {!pool.hasRealRewards && (
+                    <div className="fees-only-label">fees only</div>
+                  )}
+                  {pool.hasRealRewards && pool.realRewardsWeek > 0 && (
+                    <div className="rewards-detail">
+                      <span className="rewards-token">+{formatUsd(pool.realRewardsWeek)}</span>
+                    </div>
+                  )}
+                </td>
                 <td className={ratioColor(pool.inRangeRatio)}>
                   {pool.inRangeRatio}%
                 </td>

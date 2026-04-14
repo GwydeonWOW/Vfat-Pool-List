@@ -71,11 +71,20 @@ export function parsePool(farm, clTypes = CL_TYPES) {
   const rewardsWeek = snap.rewardsPerWeek || 0;
 
   const rewardSyms = [];
+  let realRewardsWeek = 0;
   for (const r of farm.rewards || []) {
-    if (r.rewardsPerSecond !== '0') {
-      rewardSyms.push(r.rewardToken?.symbol || '?');
+    const rps = r.rewardsPerSecond;
+    if (rps && rps !== '0' && rps !== 0) {
+      const token = r.rewardToken || {};
+      const price = token.price || 0;
+      const decimals = token.decimals || 18;
+      const weeklyAmount = (Number(rps) / (10 ** decimals)) * price * 604800;
+      realRewardsWeek += weeklyAmount;
+      rewardSyms.push(token.symbol || '?');
     }
   }
+  const hasRealRewards = realRewardsWeek > 0;
+  const feesWeek = Math.max(0, rewardsWeek - realRewardsWeek);
 
   const protocol = farm.protocol?.name || '?';
 
@@ -114,6 +123,9 @@ export function parsePool(farm, clTypes = CL_TYPES) {
     inRangeRatio: parseFloat(inRangeRatio.toFixed(1)),
     activeLiquidity: parseFloat(activeLiq.toFixed(2)),
     rewardsWeek: parseFloat(rewardsWeek.toFixed(2)),
+    realRewardsWeek: parseFloat(realRewardsWeek.toFixed(2)),
+    feesWeek: parseFloat(feesWeek.toFixed(2)),
+    hasRealRewards,
     rewardTokens: rewardSyms.length > 0 ? [...new Set(rewardSyms)].sort().join(', ') : '(fees only)',
     hasGauge: stakingApr > 0,
     underlying: underlying.map((u) => ({

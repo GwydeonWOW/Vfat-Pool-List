@@ -512,6 +512,21 @@ body {
   color: var(--red);
 }
 
+/* Rewards detail */
+.fees-only-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.rewards-detail {
+  font-size: 10px;
+}
+
+.rewards-token {
+  color: var(--green);
+}
+
 /* Loading / Error */
 .loading,
 .error {
