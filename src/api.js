@@ -5,13 +5,12 @@ const VFAT_BASE = 'https://api.vfat.io/v4/farms';
 export const CHAINS = {
   8453: { name: 'Base', defiLlamaChain: 'base' },
   56: { name: 'BSC', defiLlamaChain: 'bsc' },
-  1: { name: 'Ethereum', defiLlamaChain: 'ethereum' },
-  42161: { name: 'Arbitrum', defiLlamaChain: 'arbitrum' },
+  43114: { name: 'Avalanche', defiLlamaChain: 'avax' },
   137: { name: 'Polygon', defiLlamaChain: 'polygon' },
   10: { name: 'Optimism', defiLlamaChain: 'optimism' },
-  43114: { name: 'Avalanche', defiLlamaChain: 'avax' },
-  250: { name: 'Fantom', defiLlamaChain: 'fantom' },
-  59144: { name: 'Linea', defiLlamaChain: 'linea' },
+  146: { name: 'Sonic', defiLlamaChain: 'sonic' },
+  999: { name: 'Hype', defiLlamaChain: 'hyperliquid' },
+  143: { name: 'Monad', defiLlamaChain: 'monad' },
 };
 
 export const CL_TYPES = [
@@ -219,3 +218,91 @@ export const TIMEFRAMES = {
   day: '24h',
   week: '7d',
 };
+
+// ── RSI calculation ──
+
+/**
+ * Calculate RSI from price array.
+ * @param {number[]} prices - array of prices (chronological order)
+ * @param {number} period - RSI period (default 14)
+ * @returns {number|null} RSI value (0-100) or null if not enough data
+ */
+export function calcRSI(prices, period = 14) {
+  if (prices.length < period + 1) return null;
+
+  let avgGain = 0;
+  let avgLoss = 0;
+
+  // Initial average gain/loss
+  for (let i = 1; i <= period; i++) {
+    const change = prices[i] - prices[i - 1];
+    if (change > 0) avgGain += change;
+    else avgLoss += Math.abs(change);
+  }
+  avgGain /= period;
+  avgLoss /= period;
+
+  // Smoothed averages for remaining data
+  for (let i = period + 1; i < prices.length; i++) {
+    const change = prices[i] - prices[i - 1];
+    const gain = change > 0 ? change : 0;
+    const loss = change < 0 ? Math.abs(change) : 0;
+    avgGain = (avgGain * (period - 1) + gain) / period;
+    avgLoss = (avgLoss * (period - 1) + loss) / period;
+  }
+
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return parseFloat((100 - 100 / (1 + rs)).toFixed(1));
+}
+
+/**
+ * Fetch RSI for a pool's exotic token using 24h price data.
+ * Returns RSI value (0-100) or null.
+ */
+export async function fetchRSI(chainId, tokenAddress) {
+  const prices = await getTokenPriceHistory(chainId, tokenAddress, 24);
+  if (prices.length < 15) return null;
+  const priceValues = prices.map((p) => p.price);
+  return calcRSI(priceValues, 14);
+}
+
+/**
+ * Batch fetch RSI for multiple pools (with rate limiting).
+ * Returns Map of poolId -> rsi.
+ */
+export async function batchFetchRSI(pools, maxConcurrent = 3) {
+  const rsiMap = new Map();
+  const exotic = {};
+  const seen = new Set();
+
+  for (const p of pools) {
+    const token = getExoticToken(p);
+    if (!token?.address) continue;
+    const key = `${p.chainId}-${token.address}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    exotic[p.id] = { chainId: p.chainId, address: token.address, key };
+  }
+
+  const entries = Object.entries(exotic);
+  let i = 0;
+
+  async function processNext() {
+    while (i < entries.length) {
+      const [poolId, info] = entries[i++];
+      try {
+        const rsi = await fetchRSI(info.chainId, info.address);
+        if (rsi !== null) rsiMap.set(poolId, rsi);
+      } catch {
+        // skip
+      }
+      // Small delay to avoid hammering DeFiLlama
+      await new Promise((r) => setTimeout(r, 200));
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(maxConcurrent, entries.length) }, () => processNext());
+  await Promise.all(workers);
+  return rsiMap;
+}

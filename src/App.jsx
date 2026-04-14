@@ -1,15 +1,18 @@
-import { useState, useEffect, useCallback } from 'react';
-import { CHAINS, CL_TYPES, fetchAllPools } from './api';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { CHAINS, fetchAllPools, batchFetchRSI } from './api';
 import PoolTable from './PoolTable';
 
 const chainEntries = Object.entries(CHAINS);
 
 export default function App() {
-  const [selectedChains, setSelectedChains] = useState([8453, 56]);
+  const [selectedChains, setSelectedChains] = useState([8453, 56, 43114, 146]);
   const [pools, setPools] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
+  const [rsiData, setRsiData] = useState(new Map());
+  const [rsiLoading, setRsiLoading] = useState(false);
+  const rsiAbortRef = useRef(false);
 
   // Filters
   const [minTvl, setMinTvl] = useState(5000);
@@ -23,6 +26,8 @@ export default function App() {
   const loadPools = useCallback(async (chains) => {
     setLoading(true);
     setError(null);
+    setRsiData(new Map());
+    rsiAbortRef.current = true; // cancel any running RSI fetch
     try {
       const data = await fetchAllPools(chains);
       setPools(data);
@@ -37,6 +42,30 @@ export default function App() {
     setPools([]);
     loadPools(selectedChains);
   }, [selectedChains, loadPools]);
+
+  // Background RSI fetch for top pools after loading
+  useEffect(() => {
+    if (loading || pools.length === 0) return;
+
+    rsiAbortRef.current = false;
+    const aborted = () => rsiAbortRef.current;
+
+    // Take top 80 pools by APR for RSI calculation
+    const topPools = [...pools]
+      .sort((a, b) => b.apr - a.apr)
+      .slice(0, 80);
+
+    setRsiLoading(true);
+
+    batchFetchRSI(topPools, 3).then((rsiMap) => {
+      if (!aborted()) {
+        setRsiData(rsiMap);
+        setRsiLoading(false);
+      }
+    });
+
+    return () => { rsiAbortRef.current = true; };
+  }, [pools, loading]);
 
   const toggleChain = (chainId) => {
     setSelectedChains((prev) =>
@@ -155,13 +184,13 @@ export default function App() {
       <div className="pool-count">
         {loading
           ? `Loading pools for ${selectedChains.map((c) => CHAINS[c]?.name).join(', ')}...`
-          : `${poolCount} pools found (of ${pools.length} total)`}
+          : `${poolCount} pools found (of ${pools.length} total)${rsiLoading ? ' | Loading RSI...' : ` | RSI: ${rsiData.size} pools`}`}
       </div>
 
       {loading && pools.length === 0 ? (
         <div className="loading">Fetching farms from VFat API...</div>
       ) : (
-        <PoolTable pools={filteredPools} />
+        <PoolTable pools={filteredPools} rsiData={rsiData} />
       )}
     </div>
   );
