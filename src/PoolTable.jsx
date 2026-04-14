@@ -168,6 +168,7 @@ export default function PoolTable({ pools, rsiData }) {
   };
 
   return (
+    <div className="pool-table-wrapper">
     <table className="pool-table">
       <thead>
         <tr>
@@ -258,5 +259,6 @@ export default function PoolTable({ pools, rsiData }) {
         })}
       </tbody>
     </table>
+    </div>
   );
 }

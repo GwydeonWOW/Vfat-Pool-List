@@ -217,12 +217,23 @@ body {
 }
 
 /* Table */
+.pool-table-wrapper {
+  max-height: calc(25 * 41px + 41px); /* 25 rows + header */
+  overflow-y: auto;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
 .pool-table {
   width: 100%;
   border-collapse: collapse;
   background: var(--bg-secondary);
-  border-radius: 8px;
-  overflow: hidden;
+}
+
+.pool-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
 }
 
 .pool-table th {
@@ -234,7 +245,7 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--text-secondary);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 2px solid var(--border);
   cursor: pointer;
   user-select: none;
   white-space: nowrap;
