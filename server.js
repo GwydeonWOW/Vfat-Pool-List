@@ -356,40 +356,27 @@ async function refreshAll() {
   console.log('[Refresh] Done. Next refresh in 15 minutes.');
 }
 
-// Initial load on startup
-(async () => {
-  ensureDataDir();
+// Start server FIRST, then refresh data in background
+ensureDataDir();
+app.listen(PORT, () => {
+  console.log(`[Server] Running on port ${PORT}`);
 
-  // Check if we have cached data, if not fetch immediately
+  // Initial data load in background
   const vfat = readCache('vfat.json');
   const raydium = readCache('raydium.json');
   const turbos = readCache('turbos.json');
 
-  if (!vfat || !raydium || !turbos) {
-    console.log('[Init] No cached data found, fetching all sources...');
-    await refreshAll();
-  } else {
+  if (vfat && raydium && turbos) {
     console.log(`[Init] Cached data found: VFat ${vfat.pools.length}, Raydium ${raydium.pools.length}, Turbos ${turbos.pools.length}`);
-    // Refresh if stale
     const now = Date.now();
-    if (now - vfat.timestamp > REFRESH_INTERVAL) {
-      console.log('[Init] VFat data stale, refreshing...');
-      refreshVFat();
-    }
-    if (now - raydium.timestamp > REFRESH_INTERVAL) {
-      console.log('[Init] Raydium data stale, refreshing...');
-      refreshRaydium();
-    }
-    if (now - turbos.timestamp > REFRESH_INTERVAL) {
-      console.log('[Init] Turbos data stale, refreshing...');
-      refreshTurbos();
-    }
+    if (now - vfat.timestamp > REFRESH_INTERVAL) refreshVFat();
+    if (now - raydium.timestamp > REFRESH_INTERVAL) refreshRaydium();
+    if (now - turbos.timestamp > REFRESH_INTERVAL) refreshTurbos();
+  } else {
+    console.log('[Init] No cached data found, fetching all sources in background...');
+    refreshAll();
   }
 
   // Start periodic refresh
   setInterval(refreshAll, REFRESH_INTERVAL);
-
-  app.listen(PORT, () => {
-    console.log(`[Server] Running on port ${PORT}`);
-  });
-})();
+});
