@@ -2,22 +2,9 @@ import { useState, useMemo, Fragment } from 'react';
 import { CHAINS } from './api';
 import PoolChart from './PoolChart';
 
-const COLUMNS = [
-  { key: 'expand', label: '', sortable: false },
-  { key: 'vfname', label: 'Pool', sortable: true },
-  { key: 'protocol', label: 'Protocol', sortable: true },
-  { key: 'score', label: 'Score', sortable: true },
-  { key: 'apr', label: 'APR %', sortable: true },
-  { key: 'maxApr', label: 'Max APR', sortable: true },
-  { key: 'tvl', label: 'TVL', sortable: true },
-  { key: 'rangePct', label: 'Range %', sortable: true },
-  { key: 'tickSpacing', label: 'Tick', sortable: true },
-  { key: 'rewardsWeek', label: 'Rewards/wk', sortable: true },
-  { key: 'inRangeRatio', label: 'In-Range %', sortable: true },
-  { key: 'rsi', label: 'RSI', sortable: true },
-];
+// ── Shared utilities ──
 
-function formatUsd(num) {
+export function formatUsd(num) {
   if (!num || num === 0) return '$0';
   if (num >= 1e9) return '$' + (num / 1e9).toFixed(2) + 'B';
   if (num >= 1e6) return '$' + (num / 1e6).toFixed(2) + 'M';
@@ -25,80 +12,11 @@ function formatUsd(num) {
   return '$' + num.toFixed(2);
 }
 
-/**
- * Calculate risk-adjusted score:
- * - Base = APR
- * - Big bonus: real farm rewards (not just LP fees)
- * - Reward: high in-range ratio (stable position)
- * - Reward: moderate range (not too wide, not too tight)
- * - Reward: has gauge (staking rewards)
- * - Penalty: very low in-range ratio (position likely out of range)
- */
-function calcScore(pool) {
-  let score = pool.apr;
-
-  // Real rewards bonus: farms with actual token incentives are far more attractive
-  if (pool.hasRealRewards) {
-    score *= 1.5;
-  } else {
-    score *= 0.6; // fees-only pools get heavily penalized
-  }
-
-  // In-range ratio factor (0.0 to 1.0)
-  const inRangeFactor = pool.inRangeRatio / 100;
-  if (inRangeFactor >= 0.7) {
-    score *= 1.0;
-  } else if (inRangeFactor >= 0.4) {
-    score *= 0.7;
-  } else if (inRangeFactor >= 0.2) {
-    score *= 0.4;
-  } else {
-    score *= 0.15;
-  }
-
-  // Range factor: sweet spot is 1-5%
-  if (pool.rangePct >= 1 && pool.rangePct <= 5) {
-    score *= 1.1;
-  } else if (pool.rangePct > 10) {
-    score *= 0.8;
-  }
-
-  // Gauge bonus (extra staking rewards = more sustainable)
-  if (pool.hasGauge) {
-    score *= 1.15;
-  }
-
-  // TVL factor: higher TVL = more established
-  if (pool.tvl >= 100000) {
-    score *= 1.1;
-  } else if (pool.tvl < 10000) {
-    score *= 0.8;
-  }
-
-  // Max APR factor: rewards potential when in tight range
-  const maxApr = pool.maxApr || 0;
-  if (maxApr > 4800) {
-    score *= 1.3; // high ceiling = great potential
-  } else if (maxApr > 3200) {
-    score *= 1.0; // good range, no change
-  } else if (maxApr > 0) {
-    score *= 0.7; // low max = limited upside
-  }
-
-  return parseFloat(score.toFixed(1));
-}
-
-function aprColor(apr) {
+export function aprColor(apr) {
   if (apr >= 500) return 'apr-extreme';
   if (apr >= 200) return 'apr-high';
   if (apr >= 50) return 'apr-mid';
   return 'apr-low';
-}
-
-function scoreColor(score) {
-  if (score >= 200) return 'positive';
-  if (score >= 50) return 'apr-mid';
-  return 'score';
 }
 
 function ratioColor(ratio) {
@@ -136,19 +54,254 @@ function CopyAddr({ address, label }) {
   );
 }
 
-export default function PoolTable({ pools, rsiData }) {
+// ── VFat score calculation ──
+
+function calcVfatScore(pool) {
+  let score = pool.apr;
+
+  if (pool.hasRealRewards) {
+    score *= 1.5;
+  } else {
+    score *= 0.6;
+  }
+
+  const inRangeFactor = pool.inRangeRatio / 100;
+  if (inRangeFactor >= 0.7) score *= 1.0;
+  else if (inRangeFactor >= 0.4) score *= 0.7;
+  else if (inRangeFactor >= 0.2) score *= 0.4;
+  else score *= 0.15;
+
+  if (pool.rangePct >= 1 && pool.rangePct <= 5) score *= 1.1;
+  else if (pool.rangePct > 10) score *= 0.8;
+
+  if (pool.hasGauge) score *= 1.15;
+
+  if (pool.tvl >= 100000) score *= 1.1;
+  else if (pool.tvl < 10000) score *= 0.8;
+
+  const maxApr = pool.maxApr || 0;
+  if (maxApr > 4800) score *= 1.3;
+  else if (maxApr > 3200) score *= 1.0;
+  else if (maxApr > 0) score *= 0.7;
+
+  return parseFloat(score.toFixed(1));
+}
+
+// ── Generic score for Raydium/Turbos ──
+
+function calcGenericScore(pool) {
+  let score = pool.apr;
+
+  if (pool.hasRealRewards) {
+    score *= 1.5;
+  } else {
+    score *= 0.6;
+  }
+
+  if (pool.rangePct >= 1 && pool.rangePct <= 5) score *= 1.1;
+  else if (pool.rangePct > 10) score *= 0.8;
+
+  if (pool.tvl >= 100000) score *= 1.1;
+  else if (pool.tvl < 10000) score *= 0.8;
+
+  return parseFloat(score.toFixed(1));
+}
+
+// ── Cell renderers ──
+
+function renderVfatCell(pool, key, rsiData) {
+  const chainName = CHAINS[pool.chainId]?.name || `Chain ${pool.chainId}`;
+
+  switch (key) {
+    case 'expand':
+      return null;
+    case 'vfname':
+      return (
+        <td>
+          <div className="pool-name">{pool.vfname || pool.pair}</div>
+          <div className="pool-dex">
+            {chainName}
+            {pool.hasGauge ? ' 🏆' : ''}
+          </div>
+          <div className="pool-addrs">
+            <CopyAddr address={pool.farmAddr} label="Farm" />
+            <CopyAddr address={pool.poolAddr} label="Pool" />
+          </div>
+        </td>
+      );
+    case 'score':
+      return (
+        <td className={`score ${pool.score >= 200 ? 'positive' : pool.score >= 50 ? 'apr-mid' : 'score'}`}>
+          <strong>{pool.score}</strong>
+        </td>
+      );
+    case 'apr':
+      return (
+        <td className={aprColor(pool.apr)}>
+          <strong>{pool.apr}%</strong>
+          {pool.stakingApr > 0 && (
+            <div className="apr-detail">Staking: {pool.stakingApr}%</div>
+          )}
+        </td>
+      );
+    case 'maxApr':
+      return <td>{pool.maxApr > 0 ? `${pool.maxApr}%` : '-'}</td>;
+    case 'tvl':
+      return <td className="tvl">{formatUsd(pool.tvl)}</td>;
+    case 'rangePct':
+      return <td className="range">{pool.rangePct}%</td>;
+    case 'tickSpacing':
+      return <td>{pool.tickSpacing}</td>;
+    case 'rewardsWeek':
+      return (
+        <td>
+          <div>{formatUsd(pool.rewardsWeek)}</div>
+          {!pool.hasRealRewards && <div className="fees-only-label">fees only</div>}
+          {pool.hasRealRewards && pool.realRewardsWeek > 0 && (
+            <div className="rewards-detail">
+              <span className="rewards-token">+{formatUsd(pool.realRewardsWeek)}</span>
+            </div>
+          )}
+        </td>
+      );
+    case 'inRangeRatio':
+      return <td className={ratioColor(pool.inRangeRatio)}>{pool.inRangeRatio}%</td>;
+    case 'rsi': {
+      const rsi = rsiData?.get(pool.id);
+      return (
+        <td className={`rsi ${rsiColor(rsi)}`}>
+          {rsi != null ? rsi : '-'}
+        </td>
+      );
+    }
+    case 'protocol':
+      return <td className="protocol">{pool.protocol}</td>;
+    default:
+      return <td>{pool[key] != null ? pool[key] : '-'}</td>;
+  }
+}
+
+function renderGenericCell(pool, key) {
+  switch (key) {
+    case 'expand':
+      return null;
+    case 'pair':
+      return (
+        <td>
+          <div className="pool-name">{pool.pair}</div>
+          <div className="pool-dex">{pool.chain}</div>
+          <div className="pool-addrs">
+            <CopyAddr address={pool.poolAddr} label="Pool" />
+          </div>
+        </td>
+      );
+    case 'score':
+      return (
+        <td className={`score ${pool.score >= 200 ? 'positive' : pool.score >= 50 ? 'apr-mid' : 'score'}`}>
+          <strong>{pool.score}</strong>
+        </td>
+      );
+    case 'protocol':
+      return <td className="protocol">{pool.protocol}</td>;
+    case 'apr':
+      return (
+        <td className={aprColor(pool.apr)}>
+          <strong>{pool.apr}%</strong>
+        </td>
+      );
+    case 'feeApr':
+      return <td>{pool.feeApr}%</td>;
+    case 'rewardApr':
+      return (
+        <td className={pool.hasRealRewards ? 'positive' : ''}>
+          {pool.rewardApr > 0 ? `${pool.rewardApr}%` : '-'}
+        </td>
+      );
+    case 'tvl':
+      return <td className="tvl">{formatUsd(pool.tvl)}</td>;
+    case 'rangePct':
+      return <td className="range">{pool.rangePct}%</td>;
+    case 'tickSpacing':
+      return <td>{pool.tickSpacing}</td>;
+    case 'feePct':
+      return <td>{pool.feePct}%</td>;
+    case 'rewardTokens':
+      return (
+        <td>
+          <div className="reward-token-list">{pool.rewardTokens}</div>
+        </td>
+      );
+    case 'volume24h':
+      return <td className="tvl">{formatUsd(pool.volume24h)}</td>;
+    case 'farmCount':
+      return <td>{pool.farmCount > 0 ? pool.farmCount : '-'}</td>;
+    default:
+      return <td>{pool[key] != null ? pool[key] : '-'}</td>;
+  }
+}
+
+// ── Column definitions per source ──
+
+export const VFAT_COLUMNS = [
+  { key: 'expand', label: '', sortable: false },
+  { key: 'vfname', label: 'Pool', sortable: true },
+  { key: 'protocol', label: 'Protocol', sortable: true },
+  { key: 'score', label: 'Score', sortable: true },
+  { key: 'apr', label: 'APR %', sortable: true },
+  { key: 'maxApr', label: 'Max APR', sortable: true },
+  { key: 'tvl', label: 'TVL', sortable: true },
+  { key: 'rangePct', label: 'Range %', sortable: true },
+  { key: 'tickSpacing', label: 'Tick', sortable: true },
+  { key: 'rewardsWeek', label: 'Rewards/wk', sortable: true },
+  { key: 'inRangeRatio', label: 'In-Range %', sortable: true },
+  { key: 'rsi', label: 'RSI', sortable: true },
+];
+
+export const RAYDIUM_COLUMNS = [
+  { key: 'expand', label: '', sortable: false },
+  { key: 'pair', label: 'Pool', sortable: true },
+  { key: 'protocol', label: 'Protocol', sortable: false },
+  { key: 'score', label: 'Score', sortable: true },
+  { key: 'apr', label: 'APR %', sortable: true },
+  { key: 'rewardApr', label: 'Reward APR', sortable: true },
+  { key: 'tvl', label: 'TVL', sortable: true },
+  { key: 'volume24h', label: 'Vol 24h', sortable: true },
+  { key: 'rangePct', label: 'Range %', sortable: true },
+  { key: 'feePct', label: 'Fee %', sortable: true },
+  { key: 'tickSpacing', label: 'Tick', sortable: true },
+  { key: 'rewardTokens', label: 'Rewards', sortable: false },
+];
+
+export const TURBOS_COLUMNS = [
+  { key: 'expand', label: '', sortable: false },
+  { key: 'pair', label: 'Pool', sortable: true },
+  { key: 'protocol', label: 'Protocol', sortable: false },
+  { key: 'score', label: 'Score', sortable: true },
+  { key: 'apr', label: 'APR %', sortable: true },
+  { key: 'rewardApr', label: 'Reward APR', sortable: true },
+  { key: 'tvl', label: 'TVL', sortable: true },
+  { key: 'volume24h', label: 'Vol 24h', sortable: true },
+  { key: 'rangePct', label: 'Range %', sortable: true },
+  { key: 'feePct', label: 'Fee %', sortable: true },
+  { key: 'tickSpacing', label: 'Tick', sortable: true },
+  { key: 'rewardTokens', label: 'Rewards', sortable: false },
+];
+
+// ── Generic PoolTable ──
+
+export default function PoolTable({ pools, columns, rsiData, source = 'vfat' }) {
   const [sortKey, setSortKey] = useState('score');
   const [sortDir, setSortDir] = useState('desc');
   const [expandedId, setExpandedId] = useState(null);
 
-  // Pre-calculate scores and attach RSI for all pools
+  const calcFn = source === 'vfat' ? calcVfatScore : calcGenericScore;
+
   const poolsWithScore = useMemo(() => {
     return pools.map((p) => ({
       ...p,
-      score: calcScore(p),
-      rsi: rsiData?.get(p.id) ?? null,
+      score: calcFn(p),
     }));
-  }, [pools, rsiData]);
+  }, [pools, calcFn]);
 
   const sortedPools = useMemo(() => {
     return [...poolsWithScore].sort((a, b) => {
@@ -174,98 +327,65 @@ export default function PoolTable({ pools, rsiData }) {
     setExpandedId((prev) => (prev === poolId ? null : poolId));
   };
 
+  const renderCell = source === 'vfat' ? renderVfatCell : renderGenericCell;
+
   return (
     <div className="pool-table-wrapper">
-    <table className="pool-table">
-      <thead>
-        <tr>
-          {COLUMNS.map((col) => (
-            <th
-              key={col.key}
-              className={
-                col.sortable
-                  ? sortKey === col.key
-                    ? sortDir === 'desc'
-                      ? 'sorted-desc'
-                      : 'sorted-asc'
+      <table className="pool-table">
+        <thead>
+          <tr>
+            {columns.map((col) => (
+              <th
+                key={col.key}
+                className={
+                  col.sortable
+                    ? sortKey === col.key
+                      ? sortDir === 'desc'
+                        ? 'sorted-desc'
+                        : 'sorted-asc'
+                      : ''
                     : ''
-                  : ''
-              }
-              onClick={() => col.sortable && handleSort(col.key)}
-            >
-              {col.label}
-            </th>
-          ))}
-        </tr>
-      </thead>
-      <tbody>
-        {sortedPools.map((pool) => {
-          const isExpanded = expandedId === pool.id;
-          const chainName = CHAINS[pool.chainId]?.name || `Chain ${pool.chainId}`;
-          return (
-            <Fragment key={pool.id}>
-              <tr
-                className={`pool-row${isExpanded ? ' expanded' : ''}`}
-                onClick={() => toggleExpand(pool.id)}
+                }
+                onClick={() => col.sortable && handleSort(col.key)}
               >
-                <td className="expand-cell">
-                  <span className={`expand-arrow${isExpanded ? ' open' : ''}`}>▶</span>
-                </td>
-                <td>
-                  <div className="pool-name">{pool.vfname || pool.pair}</div>
-                  <div className="pool-dex">
-                    {chainName}
-                    {pool.hasGauge ? ' 🏆' : ''}
-                  </div>
-                  <div className="pool-addrs">
-                    <CopyAddr address={pool.farmAddr} label="Farm" />
-                    <CopyAddr address={pool.poolAddr} label="Pool" />
-                  </div>
-                </td>
-                <td className="protocol">{pool.protocol}</td>
-                <td className={`score ${scoreColor(pool.score)}`}>
-                  <strong>{pool.score}</strong>
-                </td>
-                <td className={aprColor(pool.apr)}>
-                  <strong>{pool.apr}%</strong>
-                  {pool.stakingApr > 0 && (
-                    <div className="apr-detail">Staking: {pool.stakingApr}%</div>
-                  )}
-                </td>
-                <td>{pool.maxApr > 0 ? `${pool.maxApr}%` : '-'}</td>
-                <td className="tvl">{formatUsd(pool.tvl)}</td>
-                <td className="range">{pool.rangePct}%</td>
-                <td>{pool.tickSpacing}</td>
-                <td>
-                  <div>{formatUsd(pool.rewardsWeek)}</div>
-                  {!pool.hasRealRewards && (
-                    <div className="fees-only-label">fees only</div>
-                  )}
-                  {pool.hasRealRewards && pool.realRewardsWeek > 0 && (
-                    <div className="rewards-detail">
-                      <span className="rewards-token">+{formatUsd(pool.realRewardsWeek)}</span>
-                    </div>
-                  )}
-                </td>
-                <td className={ratioColor(pool.inRangeRatio)}>
-                  {pool.inRangeRatio}%
-                </td>
-                <td className={`rsi ${rsiColor(pool.rsi)}`}>
-                  {pool.rsi != null ? pool.rsi : '-'}
-                </td>
-              </tr>
-              {isExpanded && (
-                <tr className="chart-row">
-                  <td colSpan={COLUMNS.length}>
-                    <PoolChart pool={pool} />
-                  </td>
+                {col.label}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {sortedPools.map((pool) => {
+            const isExpanded = expandedId === pool.id;
+            return (
+              <Fragment key={pool.id}>
+                <tr
+                  className={`pool-row${isExpanded ? ' expanded' : ''}`}
+                  onClick={() => toggleExpand(pool.id)}
+                >
+                  {columns.map((col) => (
+                    <Fragment key={col.key}>
+                      {col.key === 'expand' ? (
+                        <td className="expand-cell">
+                          <span className={`expand-arrow${isExpanded ? ' open' : ''}`}>▶</span>
+                        </td>
+                      ) : (
+                        renderCell(pool, col.key, rsiData)
+                      )}
+                    </Fragment>
+                  ))}
                 </tr>
-              )}
-            </Fragment>
-          );
-        })}
-      </tbody>
-    </table>
+                {isExpanded && source === 'vfat' && (
+                  <tr className="chart-row">
+                    <td colSpan={columns.length}>
+                      <PoolChart pool={pool} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 }
