@@ -3,7 +3,13 @@
 const API_BASE = '/api';
 const TOKEN_KEY = 'vfat_token';
 
-function getToken() {
+let onAuthFail = null;
+
+export function setOnAuthFail(cb) {
+  onAuthFail = cb;
+}
+
+export function getToken() {
   return localStorage.getItem(TOKEN_KEY);
 }
 
@@ -14,7 +20,7 @@ async function fetchJSON(url) {
   });
   if (res.status === 401) {
     localStorage.removeItem(TOKEN_KEY);
-    window.location.reload();
+    if (onAuthFail) onAuthFail();
     throw new Error('Session expired');
   }
   if (!res.ok) throw new Error(`API error: ${res.status}`);

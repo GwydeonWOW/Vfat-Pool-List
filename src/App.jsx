@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { CHAINS, fetchAllPools, fetchRaydiumPools, fetchTurbosPools, refreshBackend, fetchStatus } from './api';
+import { CHAINS, fetchAllPools, fetchRaydiumPools, fetchTurbosPools, refreshBackend, fetchStatus, setOnAuthFail } from './api';
+import { getToken } from './api';
 import { batchFetchRSI } from './api';
 import PoolTable, { VFAT_COLUMNS, RAYDIUM_COLUMNS, TURBOS_COLUMNS } from './PoolTable';
 import Login, { isAuthenticated, clearAuth } from './Auth';
@@ -14,6 +15,12 @@ const chainEntries = Object.entries(CHAINS);
 
 export default function App() {
   const [authenticated, setAuthenticated] = useState(isAuthenticated());
+
+  // Register auth fail callback (no page reload)
+  useEffect(() => {
+    setOnAuthFail(() => () => setAuthenticated(false));
+  }, []);
+
   const [activeTab, setActiveTab] = useState('vfat');
 
   // Data
@@ -64,6 +71,7 @@ export default function App() {
   // ── Load from backend ──
 
   const loadData = useCallback(async (tab) => {
+    if (!getToken()) return;
     setLoading(true);
     setError(null);
     try {
