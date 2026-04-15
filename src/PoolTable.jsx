@@ -34,7 +34,6 @@ function rsiColor(rsi) {
 
 function CopyAddr({ address, label }) {
   const [copied, setCopied] = useState(false);
-
   const handleCopy = (e) => {
     e.stopPropagation();
     navigator.clipboard.writeText(address).then(() => {
@@ -42,9 +41,7 @@ function CopyAddr({ address, label }) {
       setTimeout(() => setCopied(false), 1500);
     });
   };
-
   if (!address) return null;
-
   return (
     <span className="copy-addr" onClick={handleCopy} title={`Click to copy ${label}`}>
       <span className="addr-label">{label}</span>
@@ -54,75 +51,51 @@ function CopyAddr({ address, label }) {
   );
 }
 
-// ── VFat score calculation ──
+// ── VFat score ──
 
 function calcVfatScore(pool) {
   let score = pool.apr;
-
-  if (pool.hasRealRewards) {
-    score *= 1.5;
-  } else {
-    score *= 0.6;
-  }
-
+  if (pool.hasRealRewards) score *= 1.5; else score *= 0.6;
   const inRangeFactor = pool.inRangeRatio / 100;
   if (inRangeFactor >= 0.7) score *= 1.0;
   else if (inRangeFactor >= 0.4) score *= 0.7;
   else if (inRangeFactor >= 0.2) score *= 0.4;
   else score *= 0.15;
-
   if (pool.rangePct >= 1 && pool.rangePct <= 5) score *= 1.1;
   else if (pool.rangePct > 10) score *= 0.8;
-
   if (pool.hasGauge) score *= 1.15;
-
   if (pool.tvl >= 100000) score *= 1.1;
   else if (pool.tvl < 10000) score *= 0.8;
-
   const maxApr = pool.maxApr || 0;
   if (maxApr > 4800) score *= 1.3;
   else if (maxApr > 3200) score *= 1.0;
   else if (maxApr > 0) score *= 0.7;
-
   return parseFloat(score.toFixed(1));
 }
 
-// ── Generic score for Raydium/Turbos ──
+// ── Generic score (Raydium/Turbos) ──
 
 function calcGenericScore(pool) {
   let score = pool.apr;
-
-  if (pool.hasRealRewards) {
-    score *= 1.5;
-  } else {
-    score *= 0.6;
-  }
-
+  if (pool.hasRealRewards) score *= 1.5; else score *= 0.6;
   if (pool.rangePct >= 1 && pool.rangePct <= 5) score *= 1.1;
   else if (pool.rangePct > 10) score *= 0.8;
-
   if (pool.tvl >= 100000) score *= 1.1;
   else if (pool.tvl < 10000) score *= 0.8;
-
   return parseFloat(score.toFixed(1));
 }
 
-// ── Cell renderers ──
+// ── VFat cell renderer ──
 
 function renderVfatCell(pool, key, rsiData) {
   const chainName = CHAINS[pool.chainId]?.name || `Chain ${pool.chainId}`;
-
   switch (key) {
-    case 'expand':
-      return null;
+    case 'expand': return null;
     case 'vfname':
       return (
         <td>
           <div className="pool-name">{pool.vfname || pool.pair}</div>
-          <div className="pool-dex">
-            {chainName}
-            {pool.hasGauge ? ' 🏆' : ''}
-          </div>
+          <div className="pool-dex">{chainName}{pool.hasGauge ? ' 🏆' : ''}</div>
           <div className="pool-addrs">
             <CopyAddr address={pool.farmAddr} label="Farm" />
             <CopyAddr address={pool.poolAddr} label="Pool" />
@@ -135,32 +108,25 @@ function renderVfatCell(pool, key, rsiData) {
           <strong>{pool.score}</strong>
         </td>
       );
+    case 'protocol': return <td className="protocol">{pool.protocol}</td>;
     case 'apr':
       return (
         <td className={aprColor(pool.apr)}>
           <strong>{pool.apr}%</strong>
-          {pool.stakingApr > 0 && (
-            <div className="apr-detail">Staking: {pool.stakingApr}%</div>
-          )}
+          {pool.stakingApr > 0 && <div className="apr-detail">Staking: {pool.stakingApr}%</div>}
         </td>
       );
-    case 'maxApr':
-      return <td>{pool.maxApr > 0 ? `${pool.maxApr}%` : '-'}</td>;
-    case 'tvl':
-      return <td className="tvl">{formatUsd(pool.tvl)}</td>;
-    case 'rangePct':
-      return <td className="range">{pool.rangePct}%</td>;
-    case 'tickSpacing':
-      return <td>{pool.tickSpacing}</td>;
+    case 'maxApr': return <td>{pool.maxApr > 0 ? `${pool.maxApr}%` : '-'}</td>;
+    case 'tvl': return <td className="tvl">{formatUsd(pool.tvl)}</td>;
+    case 'rangePct': return <td className="range">{pool.rangePct}%</td>;
+    case 'tickSpacing': return <td>{pool.tickSpacing}</td>;
     case 'rewardsWeek':
       return (
         <td>
           <div>{formatUsd(pool.rewardsWeek)}</div>
           {!pool.hasRealRewards && <div className="fees-only-label">fees only</div>}
           {pool.hasRealRewards && pool.realRewardsWeek > 0 && (
-            <div className="rewards-detail">
-              <span className="rewards-token">+{formatUsd(pool.realRewardsWeek)}</span>
-            </div>
+            <div className="rewards-detail"><span className="rewards-token">+{formatUsd(pool.realRewardsWeek)}</span></div>
           )}
         </td>
       );
@@ -168,31 +134,23 @@ function renderVfatCell(pool, key, rsiData) {
       return <td className={ratioColor(pool.inRangeRatio)}>{pool.inRangeRatio}%</td>;
     case 'rsi': {
       const rsi = rsiData?.get(pool.id);
-      return (
-        <td className={`rsi ${rsiColor(rsi)}`}>
-          {rsi != null ? rsi : '-'}
-        </td>
-      );
+      return <td className={`rsi ${rsiColor(rsi)}`}>{rsi != null ? rsi : '-'}</td>;
     }
-    case 'protocol':
-      return <td className="protocol">{pool.protocol}</td>;
-    default:
-      return <td>{pool[key] != null ? pool[key] : '-'}</td>;
+    default: return <td>{pool[key] != null ? pool[key] : '-'}</td>;
   }
 }
 
-function renderGenericCell(pool, key) {
+// ── Raydium cell renderer ──
+
+function renderRaydiumCell(pool, key) {
   switch (key) {
-    case 'expand':
-      return null;
+    case 'expand': return null;
     case 'pair':
       return (
         <td>
           <div className="pool-name">{pool.pair}</div>
-          <div className="pool-dex">{pool.chain}</div>
-          <div className="pool-addrs">
-            <CopyAddr address={pool.poolAddr} label="Pool" />
-          </div>
+          <div className="pool-dex">Solana{pool.farmCount > 0 ? ' 🏆' : ''}</div>
+          <div className="pool-addrs"><CopyAddr address={pool.poolAddr} label="Pool" /></div>
         </td>
       );
     case 'score':
@@ -201,46 +159,76 @@ function renderGenericCell(pool, key) {
           <strong>{pool.score}</strong>
         </td>
       );
-    case 'protocol':
-      return <td className="protocol">{pool.protocol}</td>;
+    case 'protocol': return <td className="protocol">{pool.protocol}</td>;
     case 'apr':
       return (
         <td className={aprColor(pool.apr)}>
           <strong>{pool.apr}%</strong>
+          <div className="apr-detail">fee: {pool.feeApr}%</div>
         </td>
       );
-    case 'feeApr':
-      return <td>{pool.feeApr}%</td>;
     case 'rewardApr':
       return (
         <td className={pool.hasRealRewards ? 'positive' : ''}>
-          {pool.rewardApr > 0 ? `${pool.rewardApr}%` : '-'}
+          {pool.rewardApr > 0 ? <strong>{pool.rewardApr}%</strong> : <span className="fees-only-label">-</span>}
+          {pool.rewardTokens !== '(fees only)' && <div className="apr-detail">{pool.rewardTokens}</div>}
         </td>
       );
-    case 'tvl':
-      return <td className="tvl">{formatUsd(pool.tvl)}</td>;
-    case 'rangePct':
-      return <td className="range">{pool.rangePct}%</td>;
-    case 'tickSpacing':
-      return <td>{pool.tickSpacing}</td>;
-    case 'feePct':
-      return <td>{pool.feePct}%</td>;
-    case 'rewardTokens':
-      return (
-        <td>
-          <div className="reward-token-list">{pool.rewardTokens}</div>
-        </td>
-      );
-    case 'volume24h':
-      return <td className="tvl">{formatUsd(pool.volume24h)}</td>;
-    case 'farmCount':
-      return <td>{pool.farmCount > 0 ? pool.farmCount : '-'}</td>;
-    default:
-      return <td>{pool[key] != null ? pool[key] : '-'}</td>;
+    case 'tvl': return <td className="tvl">{formatUsd(pool.tvl)}</td>;
+    case 'volume7d': return <td className="tvl">{formatUsd(pool.volume7d)}</td>;
+    case 'rangePct': return <td className="range">{pool.rangePct}%</td>;
+    case 'feePct': return <td>{pool.feePct}%</td>;
+    case 'tickSpacing': return <td>{pool.tickSpacing}</td>;
+    default: return <td>{pool[key] != null ? pool[key] : '-'}</td>;
   }
 }
 
-// ── Column definitions per source ──
+// ── Turbos cell renderer ──
+
+function renderTurbosCell(pool, key) {
+  switch (key) {
+    case 'expand': return null;
+    case 'pair':
+      return (
+        <td>
+          <div className="pool-name">{pool.pair}</div>
+          <div className="pool-dex">Sui</div>
+          <div className="pool-addrs"><CopyAddr address={pool.poolAddr} label="Pool" /></div>
+        </td>
+      );
+    case 'score':
+      return (
+        <td className={`score ${pool.score >= 200 ? 'positive' : pool.score >= 50 ? 'apr-mid' : 'score'}`}>
+          <strong>{pool.score}</strong>
+        </td>
+      );
+    case 'protocol': return <td className="protocol">{pool.protocol}</td>;
+    case 'apr':
+      return (
+        <td className={aprColor(pool.apr)}>
+          <strong>{pool.apr}%</strong>
+          <div className="apr-detail">fee: {pool.feeApr}%</div>
+        </td>
+      );
+    case 'apr7d':
+      return <td>{pool.apr7d > 0 ? `${pool.apr7d}%` : '-'}</td>;
+    case 'rewardApr':
+      return (
+        <td className={pool.hasRealRewards ? 'positive' : ''}>
+          {pool.rewardApr > 0 ? <strong>{pool.rewardApr}%</strong> : <span className="fees-only-label">-</span>}
+          {pool.rewardTokens !== '(fees only)' && <div className="apr-detail">{pool.rewardTokens}</div>}
+        </td>
+      );
+    case 'tvl': return <td className="tvl">{formatUsd(pool.tvl)}</td>;
+    case 'volume24h': return <td className="tvl">{formatUsd(pool.volume24h)}</td>;
+    case 'rangePct': return <td className="range">{pool.rangePct}%</td>;
+    case 'feePct': return <td>{pool.feePct}%</td>;
+    case 'tickSpacing': return <td>{pool.tickSpacing}</td>;
+    default: return <td>{pool[key] != null ? pool[key] : '-'}</td>;
+  }
+}
+
+// ── Column definitions ──
 
 export const VFAT_COLUMNS = [
   { key: 'expand', label: '', sortable: false },
@@ -260,32 +248,43 @@ export const VFAT_COLUMNS = [
 export const RAYDIUM_COLUMNS = [
   { key: 'expand', label: '', sortable: false },
   { key: 'pair', label: 'Pool', sortable: true },
-  { key: 'protocol', label: 'Protocol', sortable: false },
   { key: 'score', label: 'Score', sortable: true },
   { key: 'apr', label: 'APR %', sortable: true },
   { key: 'rewardApr', label: 'Reward APR', sortable: true },
   { key: 'tvl', label: 'TVL', sortable: true },
-  { key: 'volume24h', label: 'Vol 24h', sortable: true },
+  { key: 'volume7d', label: 'Vol 7d', sortable: true },
   { key: 'rangePct', label: 'Range %', sortable: true },
   { key: 'feePct', label: 'Fee %', sortable: true },
   { key: 'tickSpacing', label: 'Tick', sortable: true },
-  { key: 'rewardTokens', label: 'Rewards', sortable: false },
 ];
 
 export const TURBOS_COLUMNS = [
   { key: 'expand', label: '', sortable: false },
   { key: 'pair', label: 'Pool', sortable: true },
-  { key: 'protocol', label: 'Protocol', sortable: false },
   { key: 'score', label: 'Score', sortable: true },
   { key: 'apr', label: 'APR %', sortable: true },
   { key: 'rewardApr', label: 'Reward APR', sortable: true },
+  { key: 'apr7d', label: 'APR 7d', sortable: true },
   { key: 'tvl', label: 'TVL', sortable: true },
   { key: 'volume24h', label: 'Vol 24h', sortable: true },
   { key: 'rangePct', label: 'Range %', sortable: true },
   { key: 'feePct', label: 'Fee %', sortable: true },
   { key: 'tickSpacing', label: 'Tick', sortable: true },
-  { key: 'rewardTokens', label: 'Rewards', sortable: false },
 ];
+
+// ── Renderers map ──
+
+const RENDERERS = {
+  vfat: renderVfatCell,
+  raydium: renderRaydiumCell,
+  turbos: renderTurbosCell,
+};
+
+const SCORERS = {
+  vfat: calcVfatScore,
+  raydium: calcGenericScore,
+  turbos: calcGenericScore,
+};
 
 // ── Generic PoolTable ──
 
@@ -294,13 +293,11 @@ export default function PoolTable({ pools, columns, rsiData, source = 'vfat' }) 
   const [sortDir, setSortDir] = useState('desc');
   const [expandedId, setExpandedId] = useState(null);
 
-  const calcFn = source === 'vfat' ? calcVfatScore : calcGenericScore;
+  const calcFn = SCORERS[source] || calcGenericScore;
+  const renderCell = RENDERERS[source] || renderRaydiumCell;
 
   const poolsWithScore = useMemo(() => {
-    return pools.map((p) => ({
-      ...p,
-      score: calcFn(p),
-    }));
+    return pools.map((p) => ({ ...p, score: calcFn(p) }));
   }, [pools, calcFn]);
 
   const sortedPools = useMemo(() => {
@@ -315,19 +312,13 @@ export default function PoolTable({ pools, columns, rsiData, source = 'vfat' }) 
   }, [poolsWithScore, sortKey, sortDir]);
 
   const handleSort = (key) => {
-    if (key === sortKey) {
-      setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
-    } else {
-      setSortKey(key);
-      setSortDir('desc');
-    }
+    if (key === sortKey) setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
+    else { setSortKey(key); setSortDir('desc'); }
   };
 
   const toggleExpand = (poolId) => {
     setExpandedId((prev) => (prev === poolId ? null : poolId));
   };
-
-  const renderCell = source === 'vfat' ? renderVfatCell : renderGenericCell;
 
   return (
     <div className="pool-table-wrapper">
@@ -340,9 +331,7 @@ export default function PoolTable({ pools, columns, rsiData, source = 'vfat' }) 
                 className={
                   col.sortable
                     ? sortKey === col.key
-                      ? sortDir === 'desc'
-                        ? 'sorted-desc'
-                        : 'sorted-asc'
+                      ? sortDir === 'desc' ? 'sorted-desc' : 'sorted-asc'
                       : ''
                     : ''
                 }

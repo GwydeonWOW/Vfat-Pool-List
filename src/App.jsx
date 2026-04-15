@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { CHAINS, fetchAllPools, fetchRaydiumPools, fetchTurbosPools, refreshBackend } from './api';
+import { CHAINS, fetchAllPools, fetchRaydiumPools, fetchTurbosPools, refreshBackend, fetchStatus } from './api';
 import { batchFetchRSI } from './api';
 import PoolTable, { VFAT_COLUMNS, RAYDIUM_COLUMNS, TURBOS_COLUMNS } from './PoolTable';
+import Login, { isLoggedIn, logout } from './Auth';
 
 const TABS = [
   { key: 'vfat', label: 'VFat' },
@@ -12,6 +13,7 @@ const TABS = [
 const chainEntries = Object.entries(CHAINS);
 
 export default function App() {
+  const [authenticated, setAuthenticated] = useState(isLoggedIn());
   const [activeTab, setActiveTab] = useState('vfat');
 
   // Data
@@ -27,6 +29,7 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [lastUpdated, setLastUpdated] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [refreshAgo, setRefreshAgo] = useState(null);
 
   // VFat chain filter
   const [selectedChains, setSelectedChains] = useState([8453, 56, 43114, 146]);
@@ -41,6 +44,22 @@ export default function App() {
   const [showFilters, setShowFilters] = useState(false);
 
   const rsiAbortRef = useRef(false);
+
+  // Fetch last refresh time from backend
+  const loadRefreshStatus = useCallback(async () => {
+    try {
+      const status = await fetchStatus();
+      const source = status[activeTab];
+      if (source) setRefreshAgo(source.age);
+    } catch { /* ignore */ }
+  }, [activeTab]);
+
+  // Update refresh age display every 30s
+  useEffect(() => {
+    loadRefreshStatus();
+    const interval = setInterval(loadRefreshStatus, 30000);
+    return () => clearInterval(interval);
+  }, [loadRefreshStatus]);
 
   // ── Load from backend ──
 
@@ -112,6 +131,10 @@ export default function App() {
     return () => { rsiAbortRef.current = true; };
   }, [vfatPools, loading, activeTab]);
 
+  if (!authenticated) {
+    return <Login onLogin={() => setAuthenticated(true)} />;
+  }
+
   // ── Chain toggles ──
 
   const toggleChain = (chainId) => {
@@ -162,11 +185,19 @@ export default function App() {
       <header className="header">
         <h1>VFat Pool Analyzer</h1>
         <div className="controls">
+          {refreshAgo != null && (
+            <span className="refresh-age">
+              Data: {refreshAgo < 60 ? `${refreshAgo}s` : `${Math.floor(refreshAgo/60)}m`} ago
+            </span>
+          )}
           <button onClick={handleRefresh} disabled={loading || refreshing} className="refresh-btn">
             {refreshing ? 'Refreshing...' : loading ? 'Loading...' : 'Refresh'}
           </button>
           <button onClick={() => setShowFilters(!showFilters)} className="filter-toggle-btn">
             Filters {showFilters ? '▲' : '▼'}
+          </button>
+          <button onClick={() => { logout(); setAuthenticated(false); }} className="logout-btn">
+            Logout
           </button>
         </div>
       </header>

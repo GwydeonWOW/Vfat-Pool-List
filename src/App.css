@@ -80,6 +80,31 @@ body {
   cursor: not-allowed;
 }
 
+.refresh-age {
+  color: var(--text-muted);
+  font-size: 12px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  padding: 4px 10px;
+  border-radius: 4px;
+}
+
+.logout-btn {
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  padding: 8px 14px;
+  border-radius: 6px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.logout-btn:hover {
+  border-color: var(--red);
+  color: var(--red);
+}
+
 /* Tabs */
 .tabs {
   display: flex;
@@ -594,6 +619,112 @@ body {
 
 .error {
   color: var(--red);
+}
+
+/* Login */
+.login-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background: var(--bg-primary);
+}
+
+.login-box {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 40px;
+  width: 100%;
+  max-width: 400px;
+}
+
+.login-box h1 {
+  font-size: 24px;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--blue), var(--purple));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 4px;
+}
+
+.login-subtitle {
+  color: var(--text-muted);
+  font-size: 14px;
+  margin-bottom: 24px;
+}
+
+.login-input {
+  width: 100%;
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  padding: 10px 14px;
+  border-radius: 6px;
+  font-size: 14px;
+  outline: none;
+  margin-bottom: 12px;
+}
+
+.login-input:focus {
+  border-color: var(--blue);
+}
+
+.login-btn {
+  width: 100%;
+  background: var(--blue);
+  color: white;
+  border: none;
+  padding: 10px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.login-btn:hover {
+  opacity: 0.9;
+}
+
+.login-btn-secondary {
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  margin-top: 4px;
+}
+
+.login-error {
+  color: var(--red);
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.login-msg {
+  color: var(--green);
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+.login-settings-toggle {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  margin-top: 16px;
+  width: 100%;
+  text-align: center;
+}
+
+.login-settings-toggle:hover {
+  color: var(--text-primary);
+}
+
+.login-settings {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
 }
 
 /* Responsive */
