@@ -1,9 +1,22 @@
 // ── Frontend API - calls local backend ──
 
 const API_BASE = '/api';
+const TOKEN_KEY = 'vfat_token';
+
+function getToken() {
+  return localStorage.getItem(TOKEN_KEY);
+}
 
 async function fetchJSON(url) {
-  const res = await fetch(url);
+  const token = getToken();
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (res.status === 401) {
+    localStorage.removeItem(TOKEN_KEY);
+    window.location.reload();
+    throw new Error('Session expired');
+  }
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
 }
@@ -53,9 +66,7 @@ export async function fetchTurbosPools() {
  * Trigger a manual refresh on the backend.
  */
 export async function refreshBackend(source) {
-  const res = await fetch(`${API_BASE}/refresh/${source}`);
-  if (!res.ok) throw new Error(`Refresh failed: ${res.status}`);
-  return res.json();
+  return fetchJSON(`${API_BASE}/refresh/${source}`);
 }
 
 /**

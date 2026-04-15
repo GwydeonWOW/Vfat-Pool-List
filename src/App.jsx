@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { CHAINS, fetchAllPools, fetchRaydiumPools, fetchTurbosPools, refreshBackend, fetchStatus } from './api';
 import { batchFetchRSI } from './api';
 import PoolTable, { VFAT_COLUMNS, RAYDIUM_COLUMNS, TURBOS_COLUMNS } from './PoolTable';
-import Login, { isLoggedIn, logout } from './Auth';
+import Login, { isAuthenticated, clearAuth } from './Auth';
 
 const TABS = [
   { key: 'vfat', label: 'VFat' },
@@ -13,7 +13,7 @@ const TABS = [
 const chainEntries = Object.entries(CHAINS);
 
 export default function App() {
-  const [authenticated, setAuthenticated] = useState(isLoggedIn());
+  const [authenticated, setAuthenticated] = useState(isAuthenticated());
   const [activeTab, setActiveTab] = useState('vfat');
 
   // Data
@@ -196,7 +196,7 @@ export default function App() {
           <button onClick={() => setShowFilters(!showFilters)} className="filter-toggle-btn">
             Filters {showFilters ? '▲' : '▼'}
           </button>
-          <button onClick={() => { logout(); setAuthenticated(false); }} className="logout-btn">
+          <button onClick={() => { fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('vfat_token')}` } }); clearAuth(); setAuthenticated(false); }} className="logout-btn">
             Logout
           </button>
         </div>

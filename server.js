@@ -2,10 +2,38 @@ import express from 'express';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import crypto from 'crypto';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+// Parse JSON bodies
+app.use(express.json());
+
+// ── Auth ──
+const AUTH_FILE = join(__dirname, 'data', 'auth.json');
+
+function getAuthConfig() {
+  if (existsSync(AUTH_FILE)) {
+    try { return JSON.parse(readFileSync(AUTH_FILE, 'utf-8')); } catch {}
+  }
+  return {
+    username: process.env.AUTH_USER || 'admin',
+    password: process.env.AUTH_PASS || 'changeme',
+  };
+}
+
+function saveAuthConfig(config) {
+  ensureDataDir();
+  writeFileSync(AUTH_FILE, JSON.stringify(config), 'utf-8');
+}
+
+function generateToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+const activeTokens = new Set();
 
 // ── Data directory ──
 const DATA_DIR = join(__dirname, 'data');
@@ -284,6 +312,50 @@ async function refreshTurbos() {
   console.log(`[Turbos] Total: ${allPools.length} pools cached`);
   return cache;
 }
+
+// ── Auth routes ──
+
+app.post('/api/auth/login', (req, res) => {
+  const { username, password } = req.body || {};
+  const config = getAuthConfig();
+  if (username === config.username && password === config.password) {
+    const token = generateToken();
+    activeTokens.add(token);
+    res.json({ ok: true, token });
+  } else {
+    res.status(401).json({ error: 'Invalid credentials' });
+  }
+});
+
+app.post('/api/auth/change', (req, res) => {
+  const auth = req.headers.authorization;
+  if (!auth || !activeTokens.has(auth.replace('Bearer ', ''))) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+  const { username, password } = req.body || {};
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password required' });
+  }
+  saveAuthConfig({ username, password });
+  res.json({ ok: true });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  const auth = req.headers.authorization;
+  if (auth) activeTokens.delete(auth.replace('Bearer ', ''));
+  res.json({ ok: true });
+});
+
+// ── Auth middleware (protect /api routes except auth) ──
+
+app.use('/api', (req, res, next) => {
+  if (req.path.startsWith('/auth/')) return next();
+  const auth = req.headers.authorization;
+  if (!auth || !activeTokens.has(auth.replace('Bearer ', ''))) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+  next();
+});
 
 // ── API routes ──
 

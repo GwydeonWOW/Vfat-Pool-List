@@ -1,33 +1,26 @@
 import { useState, useEffect } from 'react';
 
-const AUTH_KEY = 'vfat_auth';
+const TOKEN_KEY = 'vfat_token';
 
-const DEFAULT_USER = {
-  username: 'admin',
-  password: 'vfat2024',
-};
-
-function getStoredUser() {
-  try {
-    const raw = localStorage.getItem(AUTH_KEY);
-    if (!raw) return DEFAULT_USER;
-    return JSON.parse(raw);
-  } catch {
-    return DEFAULT_USER;
-  }
+export function getToken() {
+  return localStorage.getItem(TOKEN_KEY);
 }
 
-function saveUser(user) {
-  localStorage.setItem(AUTH_KEY, JSON.stringify(user));
+export function isAuthenticated() {
+  return !!getToken();
 }
 
-export function isLoggedIn() {
-  return sessionStorage.getItem('vfat_session') === 'true';
+export function clearAuth() {
+  localStorage.removeItem(TOKEN_KEY);
 }
 
-export function logout() {
-  sessionStorage.removeItem('vfat_session');
+async function authFetch(url, options = {}) {
+  const token = getToken();
+  const headers = { ...options.headers, Authorization: `Bearer ${token}` };
+  return fetch(url, { ...options, headers });
 }
+
+export { authFetch };
 
 export default function Login({ onLogin }) {
   const [username, setUsername] = useState('');
@@ -39,31 +32,53 @@ export default function Login({ onLogin }) {
   const [settingsMsg, setSettingsMsg] = useState('');
 
   useEffect(() => {
-    if (isLoggedIn()) onLogin();
+    if (isAuthenticated()) onLogin();
   }, []);
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
-    const user = getStoredUser();
-    if (username === user.username && password === user.password) {
-      sessionStorage.setItem('vfat_session', 'true');
-      onLogin();
-    } else {
-      setError('Invalid username or password');
+    try {
+      const res = await fetch('/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username, password }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        localStorage.setItem(TOKEN_KEY, data.token);
+        onLogin();
+      } else {
+        setError('Invalid username or password');
+      }
+    } catch {
+      setError('Connection error');
     }
   };
 
-  const handleChangeCredentials = (e) => {
+  const handleChangeCredentials = async (e) => {
     e.preventDefault();
     if (!newUser || !newPass) {
       setSettingsMsg('Username and password required');
       return;
     }
-    saveUser({ username: newUser, password: newPass });
-    setSettingsMsg('Credentials updated. Log in with new credentials.');
-    setShowSettings(false);
-    setNewUser('');
-    setNewPass('');
+    try {
+      const res = await authFetch('/api/auth/change', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: newUser, password: newPass }),
+      });
+      const data = await res.json();
+      if (data.ok) {
+        setSettingsMsg('Credentials updated. Log in with new credentials.');
+        setShowSettings(false);
+        setNewUser('');
+        setNewPass('');
+      } else {
+        setSettingsMsg(data.error || 'Failed');
+      }
+    } catch {
+      setSettingsMsg('Connection error');
+    }
   };
 
   return (
@@ -92,32 +107,36 @@ export default function Login({ onLogin }) {
           <button type="submit" className="login-btn">Sign In</button>
         </form>
 
-        <button
-          className="login-settings-toggle"
-          onClick={() => setShowSettings(!showSettings)}
-        >
-          {showSettings ? 'Hide' : 'Change'} credentials
-        </button>
+        {isAuthenticated() && (
+          <>
+            <button
+              className="login-settings-toggle"
+              onClick={() => setShowSettings(!showSettings)}
+            >
+              {showSettings ? 'Hide' : 'Change'} credentials
+            </button>
 
-        {showSettings && (
-          <form onSubmit={handleChangeCredentials} className="login-settings">
-            <input
-              type="text"
-              placeholder="New username"
-              value={newUser}
-              onChange={(e) => setNewUser(e.target.value)}
-              className="login-input"
-            />
-            <input
-              type="password"
-              placeholder="New password"
-              value={newPass}
-              onChange={(e) => setNewPass(e.target.value)}
-              className="login-input"
-            />
-            <button type="submit" className="login-btn login-btn-secondary">Save Credentials</button>
-            {settingsMsg && <div className="login-msg">{settingsMsg}</div>}
-          </form>
+            {showSettings && (
+              <form onSubmit={handleChangeCredentials} className="login-settings">
+                <input
+                  type="text"
+                  placeholder="New username"
+                  value={newUser}
+                  onChange={(e) => setNewUser(e.target.value)}
+                  className="login-input"
+                />
+                <input
+                  type="password"
+                  placeholder="New password"
+                  value={newPass}
+                  onChange={(e) => setNewPass(e.target.value)}
+                  className="login-input"
+                />
+                <button type="submit" className="login-btn login-btn-secondary">Save Credentials</button>
+                {settingsMsg && <div className="login-msg">{settingsMsg}</div>}
+              </form>
+            )}
+          </>
         )}
       </div>
     </div>
