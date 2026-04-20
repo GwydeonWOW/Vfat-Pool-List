@@ -86,11 +86,20 @@ export default function PoolChart({ pool }) {
       const lastPrice = priceData[priceData.length - 1]?.price || 0;
       const lineColor = lastPrice >= firstPrice ? '#3fb950' : '#f85149';
 
+      // Determine decimal precision based on price magnitude
+      const samplePrice = priceData[Math.floor(priceData.length / 2)]?.price || lastPrice;
+      let priceFormat;
+      if (samplePrice < 0.0001) priceFormat = { type: 'price', precision: 10, minMove: 0.0000000001 };
+      else if (samplePrice < 0.01) priceFormat = { type: 'price', precision: 8, minMove: 0.00000001 };
+      else if (samplePrice < 1) priceFormat = { type: 'price', precision: 6, minMove: 0.000001 };
+      else priceFormat = { type: 'price', precision: 4, minMove: 0.0001 };
+
       const lineSeries = chart.addLineSeries({
         color: lineColor,
         lineWidth: 2,
         priceLineVisible: true,
         lastValueVisible: true,
+        priceFormat,
       });
 
       const formattedData = priceData
