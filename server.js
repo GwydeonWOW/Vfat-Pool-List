@@ -128,6 +128,8 @@ async function fetchVFatChain(chainId) {
       poolAddr: pool.address,
       farmAddr: farm.address,
       tickSpacing, rangePct,
+      currentTick: pool.tick || null,
+      sqrtPrice: pool.sqrtPrice || null,
       fee: pool.fee, currentFee: pool.currentFee,
       apr: parseFloat(apr.toFixed(2)),
       stakingApr: parseFloat((snap.stakingApr || 0).toFixed(2)),
