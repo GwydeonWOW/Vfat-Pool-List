@@ -111,32 +111,46 @@ export default function PoolChart({ pool }) {
       lineSeries.setData(formattedData);
 
       // ── Tick range lines ──
-      // Use the actual current tick from the API to calculate exact bounds
+      // tick = log1.0001(token1/token0), so 1.0001^tick = token1 per token0
+      // We convert tick boundaries to USD using the current USD price as reference
       const tickSpacing = pool.tickSpacing || 0;
       const currentTick = pool.currentTick;
-      if (tickSpacing > 0 && currentTick != null) {
-        // Snap to tick spacing boundaries
+      if (tickSpacing > 0 && currentTick != null && exoticToken && lastPrice > 0) {
         const lowerTick = Math.floor(currentTick / tickSpacing) * tickSpacing;
         const upperTick = lowerTick + tickSpacing;
-        const lowerPrice = Math.pow(1.0001, lowerTick);
-        const upperPrice = Math.pow(1.0001, upperTick);
+
+        // Determine if exotic token is token0 or token1 in the pool
+        const exoticIdx = pool.underlying
+          ? pool.underlying.findIndex((u) => u.address === exoticToken.address)
+          : -1;
+        const isToken0 = exoticIdx === 0;
+
+        // token0: USD scales by 1.0001^(targetTick - currentTick)
+        // token1: USD scales by 1.0001^(currentTick - targetTick) (inverse)
+        const toUsd = (tick) => {
+          const delta = isToken0 ? (tick - currentTick) : (currentTick - tick);
+          return lastPrice * Math.pow(1.0001, delta);
+        };
+
+        const lowerUsd = toUsd(lowerTick);
+        const upperUsd = toUsd(upperTick);
 
         lineSeries.createPriceLine({
-          price: lowerPrice,
+          price: Math.min(lowerUsd, upperUsd),
           color: '#f0834d',
           lineWidth: 1,
-          lineStyle: 2, // dashed
+          lineStyle: 2,
           axisLabelVisible: true,
-          title: `Tick ${lowerTick}`,
+          title: 'Lower tick',
         });
 
         lineSeries.createPriceLine({
-          price: upperPrice,
+          price: Math.max(lowerUsd, upperUsd),
           color: '#58a6ff',
           lineWidth: 1,
           lineStyle: 2,
           axisLabelVisible: true,
-          title: `Tick ${upperTick}`,
+          title: 'Upper tick',
         });
       }
 
@@ -202,18 +216,31 @@ export default function PoolChart({ pool }) {
           </span>
           <span><span className="label">Chain:</span> {chainName}</span>
           <span><span className="label">Protocol:</span> {pool.protocol}</span>
-          {pool.tickSpacing > 0 && pool.currentTick != null && (() => {
-            const lt = Math.floor(pool.currentTick / pool.tickSpacing) * pool.tickSpacing;
-            const ut = lt + pool.tickSpacing;
-            const lp = Math.pow(1.0001, lt);
-            const up = Math.pow(1.0001, ut);
+          {pool.tickSpacing > 0 && pool.currentTick != null && priceData?.length > 0 && exoticToken && (() => {
+            const cp = priceData[priceData.length - 1].price;
+            const ts = pool.tickSpacing;
+            const ct = pool.currentTick;
+            const lt = Math.floor(ct / ts) * ts;
+            const ut = lt + ts;
+            const exoticIdx = pool.underlying
+              ? pool.underlying.findIndex((u) => u.address === exoticToken.address)
+              : -1;
+            const isToken0 = exoticIdx === 0;
+            const toUsd = (tick) => {
+              const delta = isToken0 ? (tick - ct) : (ct - tick);
+              return cp * Math.pow(1.0001, delta);
+            };
+            const lp = toUsd(lt);
+            const up = toUsd(ut);
+            const lo = Math.min(lp, up);
+            const hi = Math.max(lp, up);
             const fmt = (v) => v < 0.0001 ? v.toExponential(3) : v < 0.01 ? v.toFixed(8) : v < 1 ? v.toFixed(6) : v.toFixed(4);
             return (
               <span className="range-info">
                 <span className="label">Tick range:</span>{' '}
-                <span style={{ color: '#f0834d' }}>${fmt(lp)}</span>
+                <span style={{ color: '#f0834d' }}>${fmt(lo)}</span>
                 {' — '}
-                <span style={{ color: '#58a6ff' }}>${fmt(up)}</span>
+                <span style={{ color: '#58a6ff' }}>${fmt(hi)}</span>
                 <span style={{ marginLeft: 6, fontSize: 11, color: '#8b949e' }}>
                   (tick {lt} / {ut})
                 </span>
