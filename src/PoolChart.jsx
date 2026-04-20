@@ -109,6 +109,34 @@ export default function PoolChart({ pool }) {
       if (formattedData.length < 2) return;
 
       lineSeries.setData(formattedData);
+
+      // ── Tick range lines ──
+      // Range factor from tick spacing: 1.0001^tickSpacing
+      const tickSpacing = pool.tickSpacing || 0;
+      if (tickSpacing > 0 && lastPrice > 0) {
+        const rangeFactor = Math.pow(1.0001, tickSpacing);
+        const lowerBound = lastPrice / rangeFactor;
+        const upperBound = lastPrice * rangeFactor;
+
+        lineSeries.createPriceLine({
+          price: lowerBound,
+          color: '#f0834d',
+          lineWidth: 1,
+          lineStyle: 2, // dashed
+          axisLabelVisible: true,
+          title: 'Lower tick',
+        });
+
+        lineSeries.createPriceLine({
+          price: upperBound,
+          color: '#58a6ff',
+          lineWidth: 1,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title: 'Upper tick',
+        });
+      }
+
       chart.timeScale().fitContent();
 
       const ro = new ResizeObserver((entries) => {
@@ -171,6 +199,19 @@ export default function PoolChart({ pool }) {
           </span>
           <span><span className="label">Chain:</span> {chainName}</span>
           <span><span className="label">Protocol:</span> {pool.protocol}</span>
+          {pool.tickSpacing > 0 && priceData?.length > 0 && (() => {
+            const cp = priceData[priceData.length - 1].price;
+            const rf = Math.pow(1.0001, pool.tickSpacing);
+            const fmt = (v) => v < 0.0001 ? v.toExponential(3) : v < 0.01 ? v.toFixed(8) : v < 1 ? v.toFixed(6) : v.toFixed(4);
+            return (
+              <span className="range-info">
+                <span className="label">Range:</span>{' '}
+                <span style={{ color: '#f0834d' }}>${fmt(cp / rf)}</span>
+                {' — '}
+                <span style={{ color: '#58a6ff' }}>${fmt(cp * rf)}</span>
+              </span>
+            );
+          })()}
         </div>
         <div className="timeframe-buttons">
           {Object.entries(TIMEFRAMES).map(([key, label]) => (
