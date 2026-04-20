@@ -39,7 +39,7 @@ export default function App() {
   const [refreshAgo, setRefreshAgo] = useState(null);
 
   // VFat chain filter
-  const [selectedChains, setSelectedChains] = useState([8453, 56, 43114, 146]);
+  const [selectedChains, setSelectedChains] = useState([8453, 56, 43114, 137, 10, 146, 999, 143]);
 
   // Filters
   const [minTvl, setMinTvl] = useState(5000);

@@ -5,7 +5,7 @@ import { getTokenPriceHistory, getExoticToken, TIMEFRAMES, CHAINS, MAJOR_TOKENS 
 export default function PoolChart({ pool }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
-  const [timeframe, setTimeframe] = useState('day');
+  const [timeframe, setTimeframe] = useState('week');
   const [priceData, setPriceData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [chartError, setChartError] = useState(false);
@@ -142,11 +142,13 @@ export default function PoolChart({ pool }) {
             <strong>{exoticToken?.symbol || '?'}</strong>
             {priceData?.length > 0 && (
               <span style={{ marginLeft: 8, fontFamily: 'monospace', fontSize: 13 }}>
-                ${priceData[priceData.length - 1].price < 0.001
-                  ? priceData[priceData.length - 1].price.toExponential(3)
-                  : priceData[priceData.length - 1].price < 1
-                    ? priceData[priceData.length - 1].price.toFixed(6)
-                    : priceData[priceData.length - 1].price.toFixed(4)}
+                ${priceData[priceData.length - 1].price < 0.0001
+                  ? priceData[priceData.length - 1].price.toExponential(4)
+                  : priceData[priceData.length - 1].price < 0.01
+                    ? priceData[priceData.length - 1].price.toFixed(8)
+                    : priceData[priceData.length - 1].price < 1
+                      ? priceData[priceData.length - 1].price.toFixed(6)
+                      : priceData[priceData.length - 1].price.toFixed(4)}
               </span>
             )}
             {priceChange != null && (
