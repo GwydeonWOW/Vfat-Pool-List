@@ -170,17 +170,19 @@ export default function App() {
   const filteredPools = currentPools.filter((p) => {
     if (searchLower) {
       const haystack = [
-        p.pair, p.vfname, p.protocol, p.type, p.chain,
+        p.pair, p.vfname, p.protocol, p.type,
         ...p.underlying.map((u) => u.symbol),
         p.poolAddr, p.farmAddr,
       ].join(' ').toLowerCase();
       if (!haystack.includes(searchLower)) return false;
     }
-    if (p.tvl < minTvl) return false;
-    if (p.tvl > maxTvl) return false;
-    if (p.apr < effectiveMinApr) return false;
-    if (p.rangePct < minRange || p.rangePct > maxRange) return false;
-    if (activeTab === 'vfat' && p.rewardsWeek < minRewardsWeek) return false;
+    if (showFilters) {
+      if (p.tvl < minTvl) return false;
+      if (p.tvl > maxTvl) return false;
+      if (p.apr < effectiveMinApr) return false;
+      if (p.rangePct < minRange || p.rangePct > maxRange) return false;
+      if (activeTab === 'vfat' && p.rewardsWeek < minRewardsWeek) return false;
+    }
     return true;
   });
 
@@ -303,7 +305,7 @@ export default function App() {
       {loading ? (
         <div className="loading">Fetching pools from server cache...</div>
       ) : (
-        <PoolTable pools={filteredPools} columns={currentColumns} rsiData={rsiData} source={activeTab} />
+        <PoolTable key={activeTab} pools={filteredPools} columns={currentColumns} rsiData={rsiData} source={activeTab} />
       )}
     </div>
   );
