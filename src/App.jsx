@@ -84,7 +84,7 @@ export default function App() {
   const [sortDir, setSortDir] = useState('desc');
 
   // Filters
-  const [minTvl, setMinTvl] = useState(5000);
+  const [minTvl, setMinTvl] = useState(15000);
   const [maxTvl, setMaxTvl] = useState(10000000);
   const [minApr, setMinApr] = useState(100);
   const [minRange, setMinRange] = useState(0.5);
@@ -220,18 +220,20 @@ export default function App() {
       })
     : rawPools;
 
-  // Step 3: Apply numeric filters (only when panel is visible)
+  // Step 3: Apply numeric filters
+  // Min TVL filter always applies (hard floor). Other filters only when panel is visible.
+  const afterMinTvl = afterSearch.filter((p) => p.tvl >= minTvl);
+
   const effectiveMinApr = activeTab === 'vfat' ? minApr : 0;
   const afterFilters = showFilters
-    ? afterSearch.filter((p) => {
-        if (p.tvl < minTvl) return false;
+    ? afterMinTvl.filter((p) => {
         if (p.tvl > maxTvl) return false;
         if (p.apr < effectiveMinApr) return false;
         if (p.rangePct < minRange || p.rangePct > maxRange) return false;
         if (activeTab === 'vfat' && p.rewardsWeek < minRewardsWeek) return false;
         return true;
       })
-    : afterSearch;
+    : afterMinTvl;
 
   // Step 4: Score pools
   const calcFn = SCORERS[activeTab] || calcGenericScore;
@@ -374,7 +376,7 @@ export default function App() {
         <div className="loading">Fetching pools from server cache...</div>
       ) : (
         <PoolTable
-          key={`${activeTab}-${search}`}
+          key={`${activeTab}|${search}|${showFilters}|${minTvl}|${maxTvl}|${minApr}|${minRange}|${maxRange}|${minRewardsWeek}`}
           pools={sorted}
           columns={currentColumns}
           rsiData={rsiData}
