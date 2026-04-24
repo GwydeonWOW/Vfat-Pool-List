@@ -225,7 +225,7 @@ export const RAYDIUM_COLUMNS = [
 ];
 
 export const TURBOS_COLUMNS = [
-  { key: 'expand', label: '', sortable: true },
+  { key: 'expand', label: '', sortable: false },
   { key: 'pair', label: 'Pool', sortable: true },
   { key: 'score', label: 'Score', sortable: true },
   { key: 'apr', label: 'APR %', sortable: true },
@@ -248,7 +248,7 @@ const RENDERERS = {
 
 // ── PoolTable: PURE RENDERING COMPONENT ──
 // Receives ALREADY FILTERED, SCORED, AND SORTED pools from App.jsx
-// Only handles: expand/collapse rows, sort header clicks, cell rendering
+// The key={activeTab-search} in App.jsx forces full remount on filter changes
 
 export default function PoolTable({ pools, columns, rsiData, source = 'vfat', onSort, sortKey, sortDir }) {
   const [expandedId, setExpandedId] = useState(null);
@@ -259,12 +259,46 @@ export default function PoolTable({ pools, columns, rsiData, source = 'vfat', on
     setExpandedId((prev) => (prev === poolId ? null : poolId));
   };
 
+  // Build flat list of <tr> elements (no Fragment wrappers in tbody)
+  // Each pool-row gets a data-pool-id for DOM identification
+  const rows = [];
+  for (let i = 0; i < pools.length; i++) {
+    const pool = pools[i];
+    const isExpanded = expandedId === pool.id;
+
+    rows.push(
+      <tr
+        key={pool.id}
+        className={`pool-row${isExpanded ? ' expanded' : ''}`}
+        onClick={() => toggleExpand(pool.id)}
+      >
+        {columns.map((col) => (
+          col.key === 'expand' ? (
+            <td key={col.key} className="expand-cell">
+              <span className={`expand-arrow${isExpanded ? ' open' : ''}`}>▶</span>
+            </td>
+          ) : (
+            <Fragment key={col.key}>
+              {renderCell(pool, col.key, rsiData)}
+            </Fragment>
+          )
+        ))}
+      </tr>
+    );
+
+    if (isExpanded && source === 'vfat') {
+      rows.push(
+        <tr key={`${pool.id}-chart`} className="chart-row">
+          <td colSpan={columns.length}>
+            <PoolChart pool={pool} />
+          </td>
+        </tr>
+      );
+    }
+  }
+
   return (
     <div className="pool-table-wrapper">
-      {/* Debug: verify pools count inside PoolTable */}
-      <div style={{ background: '#2e1a1a', padding: '4px 16px', fontSize: '11px', fontFamily: 'monospace', color: '#f88' }}>
-        PoolTable received: {pools.length} pools
-      </div>
       <table className="pool-table">
         <thead>
           <tr>
@@ -286,36 +320,7 @@ export default function PoolTable({ pools, columns, rsiData, source = 'vfat', on
           </tr>
         </thead>
         <tbody>
-          {pools.map((pool) => {
-            const isExpanded = expandedId === pool.id;
-            return (
-              <Fragment key={pool.id}>
-                <tr
-                  className={`pool-row${isExpanded ? ' expanded' : ''}`}
-                  onClick={() => toggleExpand(pool.id)}
-                >
-                  {columns.map((col) => (
-                    <Fragment key={col.key}>
-                      {col.key === 'expand' ? (
-                        <td className="expand-cell">
-                          <span className={`expand-arrow${isExpanded ? ' open' : ''}`}>▶</span>
-                        </td>
-                      ) : (
-                        renderCell(pool, col.key, rsiData)
-                      )}
-                    </Fragment>
-                  ))}
-                </tr>
-                {isExpanded && source === 'vfat' && (
-                  <tr className="chart-row">
-                    <td colSpan={columns.length}>
-                      <PoolChart pool={pool} />
-                    </td>
-                  </tr>
-                )}
-              </Fragment>
-            );
-          })}
+          {rows}
         </tbody>
       </table>
     </div>

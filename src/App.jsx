@@ -250,19 +250,6 @@ export default function App() {
   const filteredCount = sorted.length;
   const totalPools = rawPools.length;
 
-  // Debug: trace filter pipeline
-  if (typeof __DEV_TRACE__ === 'undefined') window.__DEV_TRACE__ = {};
-  window.__DEV_TRACE__ = {
-    buildTime: typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : 'unknown',
-    rawPools: rawPools.length,
-    afterSearch: afterSearch.length,
-    afterFilters: afterFilters.length,
-    scored: scored.length,
-    sorted: sorted.length,
-    search,
-    showFilters,
-  };
-
   const handleSort = (key) => {
     if (key === sortKey) setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
     else { setSortKey(key); setSortDir('desc'); }
@@ -374,13 +361,6 @@ export default function App() {
 
       {error && <div className="error">Error: {error}</div>}
 
-      {/* Debug indicator - remove after fixing */}
-      <div style={{ background: '#1a1a2e', padding: '8px 16px', fontSize: '11px', fontFamily: 'monospace', color: '#aaa', borderBottom: '1px solid #333' }}>
-        Build: {typeof __BUILD_TIME__ !== 'undefined' ? __BUILD_TIME__ : 'unknown'} |
-        raw={rawPools.length} afterSearch={afterSearch.length} afterFilters={afterFilters.length} sorted={sorted.length} |
-        search="{search}" showFilters={String(showFilters)}
-      </div>
-
       <div className="pool-count">
         {loading
           ? `Loading ${activeTab === 'vfat' ? 'VFat' : activeTab === 'raydium' ? 'Raydium' : 'Turbos'} pools...`
@@ -394,6 +374,7 @@ export default function App() {
         <div className="loading">Fetching pools from server cache...</div>
       ) : (
         <PoolTable
+          key={`${activeTab}-${search}`}
           pools={sorted}
           columns={currentColumns}
           rsiData={rsiData}
