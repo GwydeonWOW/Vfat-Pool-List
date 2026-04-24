@@ -1,4 +1,4 @@
-import { useState, useMemo, Fragment } from 'react';
+import { useState, Fragment } from 'react';
 import { CHAINS } from './api';
 import PoolChart from './PoolChart';
 
@@ -296,20 +296,16 @@ export default function PoolTable({ pools, columns, rsiData, source = 'vfat' }) 
   const calcFn = SCORERS[source] || calcGenericScore;
   const renderCell = RENDERERS[source] || renderRaydiumCell;
 
-  const poolsWithScore = useMemo(() => {
-    return pools.map((p) => ({ ...p, score: calcFn(p) }));
-  }, [pools, calcFn]);
+  const poolsWithScore = pools.map((p) => ({ ...p, score: calcFn(p) }));
 
-  const sortedPools = useMemo(() => {
-    return [...poolsWithScore].sort((a, b) => {
-      const aVal = a[sortKey] ?? 0;
-      const bVal = b[sortKey] ?? 0;
-      if (typeof aVal === 'string') {
-        return sortDir === 'desc' ? bVal.localeCompare(aVal) : aVal.localeCompare(bVal);
-      }
-      return sortDir === 'desc' ? bVal - aVal : aVal - bVal;
-    });
-  }, [poolsWithScore, sortKey, sortDir]);
+  const sortedPools = [...poolsWithScore].sort((a, b) => {
+    const aVal = a[sortKey] ?? 0;
+    const bVal = b[sortKey] ?? 0;
+    if (typeof aVal === 'string') {
+      return sortDir === 'desc' ? bVal.localeCompare(aVal) : aVal.localeCompare(bVal);
+    }
+    return sortDir === 'desc' ? bVal - aVal : aVal - bVal;
+  });
 
   const handleSort = (key) => {
     if (key === sortKey) setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
