@@ -248,54 +248,17 @@ const RENDERERS = {
 
 // ── PoolTable: PURE RENDERING COMPONENT ──
 // Receives ALREADY FILTERED, SCORED, AND SORTED pools from App.jsx
-// The key={activeTab-search} in App.jsx forces full remount on filter changes
+// Chart is rendered OUTSIDE the table to avoid React DOM reconciliation issues
 
 export default function PoolTable({ pools, columns, rsiData, source = 'vfat', onSort, sortKey, sortDir }) {
   const [expandedId, setExpandedId] = useState(null);
 
   const renderCell = RENDERERS[source] || renderRaydiumCell;
+  const expandedPool = expandedId ? pools.find((p) => p.id === expandedId) : null;
 
   const toggleExpand = (poolId) => {
     setExpandedId((prev) => (prev === poolId ? null : poolId));
   };
-
-  // Build flat list of <tr> elements (no Fragment wrappers in tbody)
-  // Each pool-row gets a data-pool-id for DOM identification
-  const rows = [];
-  for (let i = 0; i < pools.length; i++) {
-    const pool = pools[i];
-    const isExpanded = expandedId === pool.id;
-
-    rows.push(
-      <tr
-        key={pool.id}
-        className={`pool-row${isExpanded ? ' expanded' : ''}`}
-        onClick={() => toggleExpand(pool.id)}
-      >
-        {columns.map((col) => (
-          col.key === 'expand' ? (
-            <td key={col.key} className="expand-cell">
-              <span className={`expand-arrow${isExpanded ? ' open' : ''}`}>▶</span>
-            </td>
-          ) : (
-            <Fragment key={col.key}>
-              {renderCell(pool, col.key, rsiData)}
-            </Fragment>
-          )
-        ))}
-      </tr>
-    );
-
-    if (isExpanded && source === 'vfat') {
-      rows.push(
-        <tr key={`${pool.id}-chart`} className="chart-row">
-          <td colSpan={columns.length}>
-            <PoolChart pool={pool} />
-          </td>
-        </tr>
-      );
-    }
-  }
 
   return (
     <div className="pool-table-wrapper">
@@ -319,10 +282,42 @@ export default function PoolTable({ pools, columns, rsiData, source = 'vfat', on
             ))}
           </tr>
         </thead>
-        <tbody key={expandedId || 'closed'}>
-          {rows}
+        <tbody>
+          {pools.map((pool) => {
+            const isExpanded = expandedId === pool.id;
+            return (
+              <tr
+                key={pool.id}
+                className={`pool-row${isExpanded ? ' expanded' : ''}`}
+                onClick={() => toggleExpand(pool.id)}
+              >
+                {columns.map((col) => (
+                  col.key === 'expand' ? (
+                    <td key={col.key} className="expand-cell">
+                      <span className={`expand-arrow${isExpanded ? ' open' : ''}`}>▶</span>
+                    </td>
+                  ) : (
+                    <Fragment key={col.key}>
+                      {renderCell(pool, col.key, rsiData)}
+                    </Fragment>
+                  )
+                ))}
+              </tr>
+            );
+          })}
         </tbody>
       </table>
+
+      {/* Chart rendered outside table - no DOM reconciliation issues */}
+      {expandedPool && source === 'vfat' && (
+        <div className="chart-panel">
+          <div className="chart-panel-header">
+            <span className="chart-panel-title">{expandedPool.vfname || expandedPool.pair}</span>
+            <button className="chart-panel-close" onClick={() => setExpandedId(null)}>✕ Close</button>
+          </div>
+          <PoolChart pool={expandedPool} />
+        </div>
+      )}
     </div>
   );
 }
