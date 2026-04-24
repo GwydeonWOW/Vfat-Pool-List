@@ -51,40 +51,6 @@ function CopyAddr({ address, label }) {
   );
 }
 
-// ── VFat score ──
-
-function calcVfatScore(pool) {
-  let score = pool.apr;
-  if (pool.hasRealRewards) score *= 1.5; else score *= 0.6;
-  const inRangeFactor = pool.inRangeRatio / 100;
-  if (inRangeFactor >= 0.7) score *= 1.0;
-  else if (inRangeFactor >= 0.4) score *= 0.7;
-  else if (inRangeFactor >= 0.2) score *= 0.4;
-  else score *= 0.15;
-  if (pool.rangePct >= 1 && pool.rangePct <= 5) score *= 1.1;
-  else if (pool.rangePct > 10) score *= 0.8;
-  if (pool.hasGauge) score *= 1.15;
-  if (pool.tvl >= 100000) score *= 1.1;
-  else if (pool.tvl < 10000) score *= 0.8;
-  const maxApr = pool.maxApr || 0;
-  if (maxApr > 4800) score *= 1.3;
-  else if (maxApr > 3200) score *= 1.0;
-  else if (maxApr > 0) score *= 0.7;
-  return parseFloat(score.toFixed(1));
-}
-
-// ── Generic score (Raydium/Turbos) ──
-
-function calcGenericScore(pool) {
-  let score = pool.apr;
-  if (pool.hasRealRewards) score *= 1.5; else score *= 0.6;
-  if (pool.rangePct >= 1 && pool.rangePct <= 5) score *= 1.1;
-  else if (pool.rangePct > 10) score *= 0.8;
-  if (pool.tvl >= 100000) score *= 1.1;
-  else if (pool.tvl < 10000) score *= 0.8;
-  return parseFloat(score.toFixed(1));
-}
-
 // ── VFat cell renderer ──
 
 function renderVfatCell(pool, key, rsiData) {
@@ -259,7 +225,7 @@ export const RAYDIUM_COLUMNS = [
 ];
 
 export const TURBOS_COLUMNS = [
-  { key: 'expand', label: '', sortable: false },
+  { key: 'expand', label: '', sortable: true },
   { key: 'pair', label: 'Pool', sortable: true },
   { key: 'score', label: 'Score', sortable: true },
   { key: 'apr', label: 'APR %', sortable: true },
@@ -280,62 +246,14 @@ const RENDERERS = {
   turbos: renderTurbosCell,
 };
 
-const SCORERS = {
-  vfat: calcVfatScore,
-  raydium: calcGenericScore,
-  turbos: calcGenericScore,
-};
+// ── PoolTable: PURE RENDERING COMPONENT ──
+// Receives ALREADY FILTERED, SCORED, AND SORTED pools from App.jsx
+// Only handles: expand/collapse rows, sort header clicks, cell rendering
 
-// ── Generic PoolTable ──
-// Receives UNFILTERED pools and filter params — does ALL filtering internally
-
-export default function PoolTable({ pools, columns, rsiData, source = 'vfat', search = '', filters }) {
-  const [sortKey, setSortKey] = useState('score');
-  const [sortDir, setSortDir] = useState('desc');
+export default function PoolTable({ pools, columns, rsiData, source = 'vfat', onSort, sortKey, sortDir }) {
   const [expandedId, setExpandedId] = useState(null);
 
-  const calcFn = SCORERS[source] || calcGenericScore;
   const renderCell = RENDERERS[source] || renderRaydiumCell;
-
-  // ── Filter internally ──
-  const searchLower = search.toLowerCase();
-  const f = filters || {};
-
-  const filtered = pools.filter((p) => {
-    if (searchLower) {
-      const haystack = [
-        p.pair, p.vfname, p.protocol, p.type,
-        ...(p.underlying || []).map((u) => u.symbol),
-        p.poolAddr, p.farmAddr,
-      ].join(' ').toLowerCase();
-      if (!haystack.includes(searchLower)) return false;
-    }
-    if (f.active) {
-      if (f.minTvl != null && p.tvl < f.minTvl) return false;
-      if (f.maxTvl != null && p.tvl > f.maxTvl) return false;
-      if (f.minApr != null && p.apr < f.minApr) return false;
-      if (f.minRange != null && p.rangePct < f.minRange) return false;
-      if (f.maxRange != null && p.rangePct > f.maxRange) return false;
-      if (f.minRewardsWeek != null && source === 'vfat' && p.rewardsWeek < f.minRewardsWeek) return false;
-    }
-    return true;
-  });
-
-  // Score and sort
-  const scored = filtered.map((p) => ({ ...p, score: calcFn(p) }));
-  const sorted = [...scored].sort((a, b) => {
-    const aVal = a[sortKey] ?? 0;
-    const bVal = b[sortKey] ?? 0;
-    if (typeof aVal === 'string') {
-      return sortDir === 'desc' ? bVal.localeCompare(aVal) : aVal.localeCompare(bVal);
-    }
-    return sortDir === 'desc' ? bVal - aVal : aVal - bVal;
-  });
-
-  const handleSort = (key) => {
-    if (key === sortKey) setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
-    else { setSortKey(key); setSortDir('desc'); }
-  };
 
   const toggleExpand = (poolId) => {
     setExpandedId((prev) => (prev === poolId ? null : poolId));
@@ -356,7 +274,7 @@ export default function PoolTable({ pools, columns, rsiData, source = 'vfat', se
                       : ''
                     : ''
                 }
-                onClick={() => col.sortable && handleSort(col.key)}
+                onClick={() => col.sortable && onSort && onSort(col.key)}
               >
                 {col.label}
               </th>
@@ -364,7 +282,7 @@ export default function PoolTable({ pools, columns, rsiData, source = 'vfat', se
           </tr>
         </thead>
         <tbody>
-          {sorted.map((pool) => {
+          {pools.map((pool) => {
             const isExpanded = expandedId === pool.id;
             return (
               <Fragment key={pool.id}>

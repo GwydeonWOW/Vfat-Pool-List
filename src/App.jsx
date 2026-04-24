@@ -13,6 +13,44 @@ const TABS = [
 
 const chainEntries = Object.entries(CHAINS);
 
+// ── Scoring functions ──
+
+function calcVfatScore(pool) {
+  let score = pool.apr;
+  if (pool.hasRealRewards) score *= 1.5; else score *= 0.6;
+  const inRangeFactor = pool.inRangeRatio / 100;
+  if (inRangeFactor >= 0.7) score *= 1.0;
+  else if (inRangeFactor >= 0.4) score *= 0.7;
+  else if (inRangeFactor >= 0.2) score *= 0.4;
+  else score *= 0.15;
+  if (pool.rangePct >= 1 && pool.rangePct <= 5) score *= 1.1;
+  else if (pool.rangePct > 10) score *= 0.8;
+  if (pool.hasGauge) score *= 1.15;
+  if (pool.tvl >= 100000) score *= 1.1;
+  else if (pool.tvl < 10000) score *= 0.8;
+  const maxApr = pool.maxApr || 0;
+  if (maxApr > 4800) score *= 1.3;
+  else if (maxApr > 3200) score *= 1.0;
+  else if (maxApr > 0) score *= 0.7;
+  return parseFloat(score.toFixed(1));
+}
+
+function calcGenericScore(pool) {
+  let score = pool.apr;
+  if (pool.hasRealRewards) score *= 1.5; else score *= 0.6;
+  if (pool.rangePct >= 1 && pool.rangePct <= 5) score *= 1.1;
+  else if (pool.rangePct > 10) score *= 0.8;
+  if (pool.tvl >= 100000) score *= 1.1;
+  else if (pool.tvl < 10000) score *= 0.8;
+  return parseFloat(score.toFixed(1));
+}
+
+const SCORERS = {
+  vfat: calcVfatScore,
+  raydium: calcGenericScore,
+  turbos: calcGenericScore,
+};
+
 export default function App() {
   const [authenticated, setAuthenticated] = useState(isAuthenticated());
 
@@ -40,6 +78,10 @@ export default function App() {
 
   // VFat chain filter
   const [selectedChains, setSelectedChains] = useState([8453, 56, 43114, 137, 10, 146, 999, 143]);
+
+  // Sort state
+  const [sortKey, setSortKey] = useState('score');
+  const [sortDir, setSortDir] = useState('desc');
 
   // Filters
   const [minTvl, setMinTvl] = useState(5000);
@@ -157,45 +199,61 @@ export default function App() {
     );
   };
 
-  // ── Filters ──
+  // ── ALL filtering, scoring, and sorting happens HERE ──
 
-  const currentPools = loading ? []
+  // Step 1: Get raw pools for current tab
+  const rawPools = loading ? []
     : activeTab === 'vfat'
       ? vfatPools.filter((p) => selectedChains.includes(p.chainId))
       : activeTab === 'raydium' ? raydiumPools : turbosPools;
 
-  const effectiveMinApr = activeTab === 'vfat' ? minApr : 0;
-
-  const filterConfig = {
-    active: showFilters,
-    minTvl: showFilters ? minTvl : null,
-    maxTvl: showFilters ? maxTvl : null,
-    minApr: showFilters ? effectiveMinApr : null,
-    minRange: showFilters ? minRange : null,
-    maxRange: showFilters ? maxRange : null,
-    minRewardsWeek: showFilters ? minRewardsWeek : null,
-  };
-
-  // Compute filtered count for display (same logic as PoolTable)
+  // Step 2: Apply search filter
   const searchLower = search.toLowerCase();
-  const filteredCount = currentPools.filter((p) => {
-    if (searchLower) {
-      const haystack = [
-        p.pair, p.vfname, p.protocol, p.type,
-        ...(p.underlying || []).map((u) => u.symbol),
-        p.poolAddr, p.farmAddr,
-      ].join(' ').toLowerCase();
-      if (!haystack.includes(searchLower)) return false;
+  const afterSearch = searchLower
+    ? rawPools.filter((p) => {
+        const haystack = [
+          p.pair, p.vfname, p.protocol, p.type,
+          ...(p.underlying || []).map((u) => u.symbol),
+          p.poolAddr, p.farmAddr,
+        ].join(' ').toLowerCase();
+        return haystack.includes(searchLower);
+      })
+    : rawPools;
+
+  // Step 3: Apply numeric filters (only when panel is visible)
+  const effectiveMinApr = activeTab === 'vfat' ? minApr : 0;
+  const afterFilters = showFilters
+    ? afterSearch.filter((p) => {
+        if (p.tvl < minTvl) return false;
+        if (p.tvl > maxTvl) return false;
+        if (p.apr < effectiveMinApr) return false;
+        if (p.rangePct < minRange || p.rangePct > maxRange) return false;
+        if (activeTab === 'vfat' && p.rewardsWeek < minRewardsWeek) return false;
+        return true;
+      })
+    : afterSearch;
+
+  // Step 4: Score pools
+  const calcFn = SCORERS[activeTab] || calcGenericScore;
+  const scored = afterFilters.map((p) => ({ ...p, score: calcFn(p) }));
+
+  // Step 5: Sort
+  const sorted = [...scored].sort((a, b) => {
+    const aVal = a[sortKey] ?? 0;
+    const bVal = b[sortKey] ?? 0;
+    if (typeof aVal === 'string') {
+      return sortDir === 'desc' ? bVal.localeCompare(aVal) : aVal.localeCompare(bVal);
     }
-    if (showFilters) {
-      if (p.tvl < minTvl) return false;
-      if (p.tvl > maxTvl) return false;
-      if (p.apr < effectiveMinApr) return false;
-      if (p.rangePct < minRange || p.rangePct > maxRange) return false;
-      if (activeTab === 'vfat' && p.rewardsWeek < minRewardsWeek) return false;
-    }
-    return true;
-  }).length;
+    return sortDir === 'desc' ? bVal - aVal : aVal - bVal;
+  });
+
+  const filteredCount = sorted.length;
+  const totalPools = rawPools.length;
+
+  const handleSort = (key) => {
+    if (key === sortKey) setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
+    else { setSortKey(key); setSortDir('desc'); }
+  };
 
   const currentColumns = activeTab === 'vfat' ? VFAT_COLUMNS
     : activeTab === 'raydium' ? RAYDIUM_COLUMNS : TURBOS_COLUMNS;
@@ -306,7 +364,7 @@ export default function App() {
       <div className="pool-count">
         {loading
           ? `Loading ${activeTab === 'vfat' ? 'VFat' : activeTab === 'raydium' ? 'Raydium' : 'Turbos'} pools...`
-          : `${filteredCount} pools found (of ${currentPools.length} total)`}
+          : `${filteredCount} pools found (of ${totalPools} total)`}
         {activeTab === 'vfat' && !loading && (
           <span>{rsiLoading ? ' | Loading RSI...' : ` | RSI: ${rsiData.size} pools`}</span>
         )}
@@ -316,13 +374,13 @@ export default function App() {
         <div className="loading">Fetching pools from server cache...</div>
       ) : (
         <PoolTable
-          key={activeTab}
-          pools={currentPools}
+          pools={sorted}
           columns={currentColumns}
           rsiData={rsiData}
           source={activeTab}
-          search={search}
-          filters={filterConfig}
+          onSort={handleSort}
+          sortKey={sortKey}
+          sortDir={sortDir}
         />
       )}
     </div>

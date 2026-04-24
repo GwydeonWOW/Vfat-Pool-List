@@ -412,7 +412,15 @@ app.get('/api/refresh/:source', async (req, res) => {
 });
 
 // ── Serve static files (dist/) ──
-app.use(express.static(join(__dirname, 'dist')));
+// Cache-bust JS/CSS assets (they have content hashes in filenames)
+app.use(express.static(join(__dirname, 'dist'), {
+  setHeaders: (res, path) => {
+    if (path.endsWith('.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+    }
+  },
+}));
 
 // SPA fallback
 app.get('*', (req, res) => {
