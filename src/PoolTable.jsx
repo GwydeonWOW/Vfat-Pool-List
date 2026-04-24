@@ -247,8 +247,7 @@ const RENDERERS = {
 };
 
 // ── PoolTable: PURE RENDERING COMPONENT ──
-// Each pool is its own div block (simulates table rows via CSS).
-// Chart is a div inside the same block - no dynamic <tr> needed.
+// Single table, chart as <tr>. With pagination (30 rows) React handles this fine.
 
 export default function PoolTable({ pools, columns, rsiData, source = 'vfat', onSort, sortKey, sortDir }) {
   const [expandedId, setExpandedId] = useState(null);
@@ -259,10 +258,45 @@ export default function PoolTable({ pools, columns, rsiData, source = 'vfat', on
     setExpandedId((prev) => (prev === poolId ? null : poolId));
   };
 
+  // Build rows: pool row + optional chart row
+  const rows = [];
+  for (const pool of pools) {
+    const isExpanded = expandedId === pool.id;
+
+    rows.push(
+      <tr
+        key={pool.id}
+        className={`pool-row${isExpanded ? ' expanded' : ''}`}
+        onClick={() => toggleExpand(pool.id)}
+      >
+        {columns.map((col) => (
+          col.key === 'expand' ? (
+            <td key={col.key} className="expand-cell">
+              <span className={`expand-arrow${isExpanded ? ' open' : ''}`}>▶</span>
+            </td>
+          ) : (
+            <Fragment key={col.key}>
+              {renderCell(pool, col.key, rsiData)}
+            </Fragment>
+          )
+        ))}
+      </tr>
+    );
+
+    if (isExpanded && source === 'vfat') {
+      rows.push(
+        <tr key={`${pool.id}-chart`} className="chart-row">
+          <td colSpan={columns.length}>
+            <PoolChart pool={pool} />
+          </td>
+        </tr>
+      );
+    }
+  }
+
   return (
     <div className="pool-table-wrapper">
-      {/* Header row - real table for proper column alignment */}
-      <table className="pool-table pool-table-head">
+      <table className="pool-table">
         <thead>
           <tr>
             {columns.map((col) => (
@@ -282,43 +316,10 @@ export default function PoolTable({ pools, columns, rsiData, source = 'vfat', on
             ))}
           </tr>
         </thead>
+        <tbody>
+          {rows}
+        </tbody>
       </table>
-
-      {/* Body - each pool is a separate table + optional chart div */}
-      <div className="pool-table-body">
-        {pools.map((pool) => {
-          const isExpanded = expandedId === pool.id;
-          return (
-            <div key={pool.id} className="pool-row-block">
-              <table className="pool-table">
-                <tbody>
-                  <tr
-                    className={`pool-row${isExpanded ? ' expanded' : ''}`}
-                    onClick={() => toggleExpand(pool.id)}
-                  >
-                    {columns.map((col) => (
-                      col.key === 'expand' ? (
-                        <td key={col.key} className="expand-cell">
-                          <span className={`expand-arrow${isExpanded ? ' open' : ''}`}>▶</span>
-                        </td>
-                      ) : (
-                        <Fragment key={col.key}>
-                          {renderCell(pool, col.key, rsiData)}
-                        </Fragment>
-                      )
-                    ))}
-                  </tr>
-                </tbody>
-              </table>
-              {isExpanded && source === 'vfat' && (
-                <div className="chart-inline">
-                  <PoolChart pool={pool} />
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
     </div>
   );
 }

@@ -364,39 +364,9 @@ body {
   transform: rotate(90deg);
 }
 
-/* Pool table body - split into per-row tables */
-.pool-table-head {
-  border-bottom: none;
-}
-
-.pool-table-body {
-  border: 1px solid var(--border);
-  border-top: none;
-  border-radius: 0 0 8px 8px;
-  overflow: hidden;
-}
-
-.pool-table-body .pool-table {
-  border: none;
-  border-radius: 0;
-}
-
-.pool-row-block .pool-table {
-  border-bottom: 1px solid var(--border);
-}
-
-.pool-row-block:last-child .pool-table {
-  border-bottom: none;
-}
-
-.pool-row-block .pool-table td {
-  border-bottom: none;
-}
-
-/* Inline chart (inside pool-row-block, below the row) */
-.chart-inline {
-  background: var(--bg-secondary);
-  border-top: 1px solid var(--blue);
+/* Expanded chart row */
+.chart-row td {
+  padding: 0 !important;
   border-bottom: 1px solid var(--border);
 }
 
