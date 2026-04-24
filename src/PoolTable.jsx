@@ -261,6 +261,10 @@ export default function PoolTable({ pools, columns, rsiData, source = 'vfat', on
 
   return (
     <div className="pool-table-wrapper">
+      {/* Debug: verify pools count inside PoolTable */}
+      <div style={{ background: '#2e1a1a', padding: '4px 16px', fontSize: '11px', fontFamily: 'monospace', color: '#f88' }}>
+        PoolTable received: {pools.length} pools
+      </div>
       <table className="pool-table">
         <thead>
           <tr>
