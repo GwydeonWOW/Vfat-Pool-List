@@ -319,7 +319,7 @@ export default function PoolTable({ pools, columns, rsiData, source = 'vfat', on
             ))}
           </tr>
         </thead>
-        <tbody>
+        <tbody key={expandedId || 'closed'}>
           {rows}
         </tbody>
       </table>
