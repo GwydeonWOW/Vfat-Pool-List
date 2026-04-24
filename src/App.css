@@ -727,6 +727,53 @@ body {
   border-top: 1px solid var(--border);
 }
 
+/* Pagination */
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 16px;
+  margin-top: 8px;
+}
+
+.page-btn {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  padding: 8px 20px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.page-btn:hover:not(:disabled) {
+  border-color: var(--blue);
+}
+
+.page-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.page-info {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.page-range {
+  color: var(--text-muted);
+  margin-left: 4px;
+}
+
+/* Remove scroll constraint - pagination handles it */
+.pool-table-wrapper {
+  max-height: none;
+  overflow-y: visible;
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .app {

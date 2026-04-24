@@ -12,6 +12,7 @@ const TABS = [
 ];
 
 const chainEntries = Object.entries(CHAINS);
+const PAGE_SIZE = 30;
 
 // ── Scoring functions ──
 
@@ -76,6 +77,9 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshAgo, setRefreshAgo] = useState(null);
 
+  // Pagination
+  const [page, setPage] = useState(1);
+
   // VFat chain filter
   const [selectedChains, setSelectedChains] = useState([8453, 56, 43114, 137, 10, 146, 999, 143]);
 
@@ -128,7 +132,6 @@ export default function App() {
         pools = await fetchTurbosPools();
         setTurbosPools(pools);
       }
-      // Use backend timestamp as lastUpdated
       setLastUpdated(Date.now());
     } catch (err) {
       setError(err.message);
@@ -153,6 +156,7 @@ export default function App() {
   useEffect(() => {
     setSearch('');
     setError(null);
+    setPage(1);
     loadData(activeTab);
   }, [activeTab, loadData]);
 
@@ -201,13 +205,11 @@ export default function App() {
 
   // ── ALL filtering, scoring, and sorting happens HERE ──
 
-  // Step 1: Get raw pools for current tab
   const rawPools = loading ? []
     : activeTab === 'vfat'
       ? vfatPools.filter((p) => selectedChains.includes(p.chainId))
       : activeTab === 'raydium' ? raydiumPools : turbosPools;
 
-  // Step 2: Apply search filter
   const searchLower = search.toLowerCase();
   const afterSearch = searchLower
     ? rawPools.filter((p) => {
@@ -220,10 +222,8 @@ export default function App() {
       })
     : rawPools;
 
-  // Step 3: Apply numeric filters
-  // Min TVL filter always applies (hard floor). Other filters only when panel is visible.
+  // Min TVL always applies. Other filters only when panel is visible.
   const afterMinTvl = afterSearch.filter((p) => p.tvl >= minTvl);
-
   const effectiveMinApr = activeTab === 'vfat' ? minApr : 0;
   const afterFilters = showFilters
     ? afterMinTvl.filter((p) => {
@@ -235,11 +235,8 @@ export default function App() {
       })
     : afterMinTvl;
 
-  // Step 4: Score pools
   const calcFn = SCORERS[activeTab] || calcGenericScore;
   const scored = afterFilters.map((p) => ({ ...p, score: calcFn(p) }));
-
-  // Step 5: Sort
   const sorted = [...scored].sort((a, b) => {
     const aVal = a[sortKey] ?? 0;
     const bVal = b[sortKey] ?? 0;
@@ -249,12 +246,21 @@ export default function App() {
     return sortDir === 'desc' ? bVal - aVal : aVal - bVal;
   });
 
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pageStart = (safePage - 1) * PAGE_SIZE;
+  const pagePools = sorted.slice(pageStart, pageStart + PAGE_SIZE);
+
   const filteredCount = sorted.length;
   const totalPools = rawPools.length;
 
+  // Reset page when filters change
+  const handleSearch = (val) => { setSearch(val); setPage(1); };
   const handleSort = (key) => {
     if (key === sortKey) setSortDir((d) => (d === 'desc' ? 'asc' : 'desc'));
     else { setSortKey(key); setSortDir('desc'); }
+    setPage(1);
   };
 
   const currentColumns = activeTab === 'vfat' ? VFAT_COLUMNS
@@ -301,10 +307,10 @@ export default function App() {
           type="text"
           placeholder="Search by token, pool name, protocol, or address..."
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => handleSearch(e.target.value)}
           className="search-input"
         />
-        {search && <button className="search-clear" onClick={() => setSearch('')}>✕</button>}
+        {search && <button className="search-clear" onClick={() => handleSearch('')}>✕</button>}
       </div>
 
       {/* Chain selector (VFat only) */}
@@ -331,30 +337,30 @@ export default function App() {
           <div className="filter-row">
             <label>
               Min TVL: $
-              <input type="number" value={minTvl} onChange={(e) => setMinTvl(Number(e.target.value))} />
+              <input type="number" value={minTvl} onChange={(e) => { setMinTvl(Number(e.target.value)); setPage(1); }} />
             </label>
             <label>
               Max TVL: $
-              <input type="number" value={maxTvl} onChange={(e) => setMaxTvl(Number(e.target.value))} />
+              <input type="number" value={maxTvl} onChange={(e) => { setMaxTvl(Number(e.target.value)); setPage(1); }} />
             </label>
             {activeTab === 'vfat' && (
               <label>
                 Min APR: %
-                <input type="number" value={minApr} onChange={(e) => setMinApr(Number(e.target.value))} />
+                <input type="number" value={minApr} onChange={(e) => { setMinApr(Number(e.target.value)); setPage(1); }} />
               </label>
             )}
           </div>
           <div className="filter-row">
             <label>
               Range: %
-              <input type="number" step="0.1" value={minRange} onChange={(e) => setMinRange(Number(e.target.value))} />
+              <input type="number" step="0.1" value={minRange} onChange={(e) => { setMinRange(Number(e.target.value)); setPage(1); }} />
               -
-              <input type="number" step="0.1" value={maxRange} onChange={(e) => setMaxRange(Number(e.target.value))} />
+              <input type="number" step="0.1" value={maxRange} onChange={(e) => { setMaxRange(Number(e.target.value)); setPage(1); }} />
             </label>
             {activeTab === 'vfat' && (
               <label>
                 Min Rewards/week: $
-                <input type="number" value={minRewardsWeek} onChange={(e) => setMinRewardsWeek(Number(e.target.value))} />
+                <input type="number" value={minRewardsWeek} onChange={(e) => { setMinRewardsWeek(Number(e.target.value)); setPage(1); }} />
               </label>
             )}
           </div>
@@ -375,16 +381,41 @@ export default function App() {
       {loading ? (
         <div className="loading">Fetching pools from server cache...</div>
       ) : (
-        <PoolTable
-          key={`${activeTab}|${search}|${showFilters}|${minTvl}|${maxTvl}|${minApr}|${minRange}|${maxRange}|${minRewardsWeek}`}
-          pools={sorted}
-          columns={currentColumns}
-          rsiData={rsiData}
-          source={activeTab}
-          onSort={handleSort}
-          sortKey={sortKey}
-          sortDir={sortDir}
-        />
+        <>
+          <PoolTable
+            pools={pagePools}
+            columns={currentColumns}
+            rsiData={rsiData}
+            source={activeTab}
+            onSort={handleSort}
+            sortKey={sortKey}
+            sortDir={sortDir}
+          />
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="pagination">
+              <button
+                className="page-btn"
+                disabled={safePage <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                ← Prev
+              </button>
+              <span className="page-info">
+                Page {safePage} / {totalPages}
+                <span className="page-range"> ({pageStart + 1}-{Math.min(pageStart + PAGE_SIZE, filteredCount)} of {filteredCount})</span>
+              </span>
+              <button
+                className="page-btn"
+                disabled={safePage >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                Next →
+              </button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
