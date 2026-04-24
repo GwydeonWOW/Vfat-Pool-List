@@ -247,14 +247,13 @@ const RENDERERS = {
 };
 
 // ── PoolTable: PURE RENDERING COMPONENT ──
-// Receives ALREADY FILTERED, SCORED, AND SORTED pools from App.jsx
-// Chart is rendered OUTSIDE the table to avoid React DOM reconciliation issues
+// Each pool is its own div block (simulates table rows via CSS).
+// Chart is a div inside the same block - no dynamic <tr> needed.
 
 export default function PoolTable({ pools, columns, rsiData, source = 'vfat', onSort, sortKey, sortDir }) {
   const [expandedId, setExpandedId] = useState(null);
 
   const renderCell = RENDERERS[source] || renderRaydiumCell;
-  const expandedPool = expandedId ? pools.find((p) => p.id === expandedId) : null;
 
   const toggleExpand = (poolId) => {
     setExpandedId((prev) => (prev === poolId ? null : poolId));
@@ -262,7 +261,8 @@ export default function PoolTable({ pools, columns, rsiData, source = 'vfat', on
 
   return (
     <div className="pool-table-wrapper">
-      <table className="pool-table">
+      {/* Header row - real table for proper column alignment */}
+      <table className="pool-table pool-table-head">
         <thead>
           <tr>
             {columns.map((col) => (
@@ -282,42 +282,43 @@ export default function PoolTable({ pools, columns, rsiData, source = 'vfat', on
             ))}
           </tr>
         </thead>
-        <tbody>
-          {pools.map((pool) => {
-            const isExpanded = expandedId === pool.id;
-            return (
-              <tr
-                key={pool.id}
-                className={`pool-row${isExpanded ? ' expanded' : ''}`}
-                onClick={() => toggleExpand(pool.id)}
-              >
-                {columns.map((col) => (
-                  col.key === 'expand' ? (
-                    <td key={col.key} className="expand-cell">
-                      <span className={`expand-arrow${isExpanded ? ' open' : ''}`}>▶</span>
-                    </td>
-                  ) : (
-                    <Fragment key={col.key}>
-                      {renderCell(pool, col.key, rsiData)}
-                    </Fragment>
-                  )
-                ))}
-              </tr>
-            );
-          })}
-        </tbody>
       </table>
 
-      {/* Chart rendered outside table - no DOM reconciliation issues */}
-      {expandedPool && source === 'vfat' && (
-        <div className="chart-panel">
-          <div className="chart-panel-header">
-            <span className="chart-panel-title">{expandedPool.vfname || expandedPool.pair}</span>
-            <button className="chart-panel-close" onClick={() => setExpandedId(null)}>✕ Close</button>
-          </div>
-          <PoolChart pool={expandedPool} />
-        </div>
-      )}
+      {/* Body - each pool is a separate table + optional chart div */}
+      <div className="pool-table-body">
+        {pools.map((pool) => {
+          const isExpanded = expandedId === pool.id;
+          return (
+            <div key={pool.id} className="pool-row-block">
+              <table className="pool-table">
+                <tbody>
+                  <tr
+                    className={`pool-row${isExpanded ? ' expanded' : ''}`}
+                    onClick={() => toggleExpand(pool.id)}
+                  >
+                    {columns.map((col) => (
+                      col.key === 'expand' ? (
+                        <td key={col.key} className="expand-cell">
+                          <span className={`expand-arrow${isExpanded ? ' open' : ''}`}>▶</span>
+                        </td>
+                      ) : (
+                        <Fragment key={col.key}>
+                          {renderCell(pool, col.key, rsiData)}
+                        </Fragment>
+                      )
+                    ))}
+                  </tr>
+                </tbody>
+              </table>
+              {isExpanded && source === 'vfat' && (
+                <div className="chart-inline">
+                  <PoolChart pool={pool} />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

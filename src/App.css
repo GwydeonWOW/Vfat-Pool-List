@@ -364,40 +364,40 @@ body {
   transform: rotate(90deg);
 }
 
-/* Chart panel (rendered outside table) */
-.chart-panel {
-  background: var(--bg-secondary);
-  border-top: 2px solid var(--blue);
-  border-bottom: 1px solid var(--border);
+/* Pool table body - split into per-row tables */
+.pool-table-head {
+  border-bottom: none;
 }
 
-.chart-panel-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 10px 20px;
-  border-bottom: 1px solid var(--border);
-}
-
-.chart-panel-title {
-  font-weight: 600;
-  font-size: 14px;
-}
-
-.chart-panel-close {
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
+.pool-table-body {
   border: 1px solid var(--border);
-  padding: 4px 12px;
-  border-radius: 4px;
-  font-size: 12px;
-  cursor: pointer;
-  transition: all 0.15s;
+  border-top: none;
+  border-radius: 0 0 8px 8px;
+  overflow: hidden;
 }
 
-.chart-panel-close:hover {
-  border-color: var(--red);
-  color: var(--red);
+.pool-table-body .pool-table {
+  border: none;
+  border-radius: 0;
+}
+
+.pool-row-block .pool-table {
+  border-bottom: 1px solid var(--border);
+}
+
+.pool-row-block:last-child .pool-table {
+  border-bottom: none;
+}
+
+.pool-row-block .pool-table td {
+  border-bottom: none;
+}
+
+/* Inline chart (inside pool-row-block, below the row) */
+.chart-inline {
+  background: var(--bg-secondary);
+  border-top: 1px solid var(--blue);
+  border-bottom: 1px solid var(--border);
 }
 
 .chart-container {
