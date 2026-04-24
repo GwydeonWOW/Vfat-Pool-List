@@ -165,13 +165,24 @@ export default function App() {
       : activeTab === 'raydium' ? raydiumPools : turbosPools;
 
   const effectiveMinApr = activeTab === 'vfat' ? minApr : 0;
-  const searchLower = search.toLowerCase();
 
-  const filteredPools = currentPools.filter((p) => {
+  const filterConfig = {
+    active: showFilters,
+    minTvl: showFilters ? minTvl : null,
+    maxTvl: showFilters ? maxTvl : null,
+    minApr: showFilters ? effectiveMinApr : null,
+    minRange: showFilters ? minRange : null,
+    maxRange: showFilters ? maxRange : null,
+    minRewardsWeek: showFilters ? minRewardsWeek : null,
+  };
+
+  // Compute filtered count for display (same logic as PoolTable)
+  const searchLower = search.toLowerCase();
+  const filteredCount = currentPools.filter((p) => {
     if (searchLower) {
       const haystack = [
         p.pair, p.vfname, p.protocol, p.type,
-        ...p.underlying.map((u) => u.symbol),
+        ...(p.underlying || []).map((u) => u.symbol),
         p.poolAddr, p.farmAddr,
       ].join(' ').toLowerCase();
       if (!haystack.includes(searchLower)) return false;
@@ -184,9 +195,8 @@ export default function App() {
       if (activeTab === 'vfat' && p.rewardsWeek < minRewardsWeek) return false;
     }
     return true;
-  });
+  }).length;
 
-  const poolCount = filteredPools.length;
   const currentColumns = activeTab === 'vfat' ? VFAT_COLUMNS
     : activeTab === 'raydium' ? RAYDIUM_COLUMNS : TURBOS_COLUMNS;
 
@@ -296,7 +306,7 @@ export default function App() {
       <div className="pool-count">
         {loading
           ? `Loading ${activeTab === 'vfat' ? 'VFat' : activeTab === 'raydium' ? 'Raydium' : 'Turbos'} pools...`
-          : `${poolCount} pools found (of ${currentPools.length} total)`}
+          : `${filteredCount} pools found (of ${currentPools.length} total)`}
         {activeTab === 'vfat' && !loading && (
           <span>{rsiLoading ? ' | Loading RSI...' : ` | RSI: ${rsiData.size} pools`}</span>
         )}
@@ -305,7 +315,15 @@ export default function App() {
       {loading ? (
         <div className="loading">Fetching pools from server cache...</div>
       ) : (
-        <PoolTable key={activeTab} pools={filteredPools} columns={currentColumns} rsiData={rsiData} source={activeTab} />
+        <PoolTable
+          key={activeTab}
+          pools={currentPools}
+          columns={currentColumns}
+          rsiData={rsiData}
+          source={activeTab}
+          search={search}
+          filters={filterConfig}
+        />
       )}
     </div>
   );

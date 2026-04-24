@@ -287,8 +287,9 @@ const SCORERS = {
 };
 
 // ── Generic PoolTable ──
+// Receives UNFILTERED pools and filter params — does ALL filtering internally
 
-export default function PoolTable({ pools, columns, rsiData, source = 'vfat' }) {
+export default function PoolTable({ pools, columns, rsiData, source = 'vfat', search = '', filters }) {
   const [sortKey, setSortKey] = useState('score');
   const [sortDir, setSortDir] = useState('desc');
   const [expandedId, setExpandedId] = useState(null);
@@ -296,9 +297,33 @@ export default function PoolTable({ pools, columns, rsiData, source = 'vfat' }) 
   const calcFn = SCORERS[source] || calcGenericScore;
   const renderCell = RENDERERS[source] || renderRaydiumCell;
 
-  const poolsWithScore = pools.map((p) => ({ ...p, score: calcFn(p) }));
+  // ── Filter internally ──
+  const searchLower = search.toLowerCase();
+  const f = filters || {};
 
-  const sortedPools = [...poolsWithScore].sort((a, b) => {
+  const filtered = pools.filter((p) => {
+    if (searchLower) {
+      const haystack = [
+        p.pair, p.vfname, p.protocol, p.type,
+        ...(p.underlying || []).map((u) => u.symbol),
+        p.poolAddr, p.farmAddr,
+      ].join(' ').toLowerCase();
+      if (!haystack.includes(searchLower)) return false;
+    }
+    if (f.active) {
+      if (f.minTvl != null && p.tvl < f.minTvl) return false;
+      if (f.maxTvl != null && p.tvl > f.maxTvl) return false;
+      if (f.minApr != null && p.apr < f.minApr) return false;
+      if (f.minRange != null && p.rangePct < f.minRange) return false;
+      if (f.maxRange != null && p.rangePct > f.maxRange) return false;
+      if (f.minRewardsWeek != null && source === 'vfat' && p.rewardsWeek < f.minRewardsWeek) return false;
+    }
+    return true;
+  });
+
+  // Score and sort
+  const scored = filtered.map((p) => ({ ...p, score: calcFn(p) }));
+  const sorted = [...scored].sort((a, b) => {
     const aVal = a[sortKey] ?? 0;
     const bVal = b[sortKey] ?? 0;
     if (typeof aVal === 'string') {
@@ -339,7 +364,7 @@ export default function PoolTable({ pools, columns, rsiData, source = 'vfat' }) 
           </tr>
         </thead>
         <tbody>
-          {sortedPools.map((pool) => {
+          {sorted.map((pool) => {
             const isExpanded = expandedId === pool.id;
             return (
               <Fragment key={pool.id}>
