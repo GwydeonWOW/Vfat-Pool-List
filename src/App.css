@@ -370,6 +370,10 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
+.chart-row.chart-hidden {
+  display: none;
+}
+
 .chart-container {
   padding: 20px;
   background: var(--bg-secondary);

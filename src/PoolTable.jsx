@@ -247,7 +247,9 @@ const RENDERERS = {
 };
 
 // ── PoolTable: PURE RENDERING COMPONENT ──
-// Single table, chart as <tr>. With pagination (30 rows) React handles this fine.
+// Chart rows are ALWAYS rendered (one per pool) with display:none toggle.
+// React NEVER adds/removes <tr> elements - only changes CSS and conditional children.
+// This eliminates ALL DOM reconciliation issues.
 
 export default function PoolTable({ pools, columns, rsiData, source = 'vfat', onSort, sortKey, sortDir }) {
   const [expandedId, setExpandedId] = useState(null);
@@ -257,42 +259,6 @@ export default function PoolTable({ pools, columns, rsiData, source = 'vfat', on
   const toggleExpand = (poolId) => {
     setExpandedId((prev) => (prev === poolId ? null : poolId));
   };
-
-  // Build rows: pool row + optional chart row
-  const rows = [];
-  for (const pool of pools) {
-    const isExpanded = expandedId === pool.id;
-
-    rows.push(
-      <tr
-        key={pool.id}
-        className={`pool-row${isExpanded ? ' expanded' : ''}`}
-        onClick={() => toggleExpand(pool.id)}
-      >
-        {columns.map((col) => (
-          col.key === 'expand' ? (
-            <td key={col.key} className="expand-cell">
-              <span className={`expand-arrow${isExpanded ? ' open' : ''}`}>▶</span>
-            </td>
-          ) : (
-            <Fragment key={col.key}>
-              {renderCell(pool, col.key, rsiData)}
-            </Fragment>
-          )
-        ))}
-      </tr>
-    );
-
-    if (isExpanded && source === 'vfat') {
-      rows.push(
-        <tr key={`${pool.id}-chart`} className="chart-row">
-          <td colSpan={columns.length}>
-            <PoolChart pool={pool} />
-          </td>
-        </tr>
-      );
-    }
-  }
 
   return (
     <div className="pool-table-wrapper">
@@ -317,7 +283,37 @@ export default function PoolTable({ pools, columns, rsiData, source = 'vfat', on
           </tr>
         </thead>
         <tbody>
-          {rows}
+          {pools.map((pool) => {
+            const isExpanded = expandedId === pool.id;
+            return (
+              <Fragment key={pool.id}>
+                <tr
+                  className={`pool-row${isExpanded ? ' expanded' : ''}`}
+                  onClick={() => toggleExpand(pool.id)}
+                >
+                  {columns.map((col) => (
+                    col.key === 'expand' ? (
+                      <td key={col.key} className="expand-cell">
+                        <span className={`expand-arrow${isExpanded ? ' open' : ''}`}>▶</span>
+                      </td>
+                    ) : (
+                      <Fragment key={col.key}>
+                        {renderCell(pool, col.key, rsiData)}
+                      </Fragment>
+                    )
+                  ))}
+                </tr>
+                {/* Chart row: ALWAYS in DOM, toggled via CSS. No add/remove = no DOM leak. */}
+                <tr
+                  className={`chart-row${isExpanded ? '' : ' chart-hidden'}`}
+                >
+                  <td colSpan={columns.length}>
+                    {isExpanded && source === 'vfat' && <PoolChart pool={pool} />}
+                  </td>
+                </tr>
+              </Fragment>
+            );
+          })}
         </tbody>
       </table>
     </div>
