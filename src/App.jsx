@@ -383,6 +383,7 @@ export default function App() {
       ) : (
         <>
           <PoolTable
+            key={pagePools.map(p => p.id).join('|')}
             pools={pagePools}
             columns={currentColumns}
             rsiData={rsiData}
