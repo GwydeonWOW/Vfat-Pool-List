@@ -1,4 +1,4 @@
-import { useState, Fragment } from 'react';
+import { useState, Fragment, useEffect } from 'react';
 import { CHAINS } from './api';
 import PoolChart from './PoolChart';
 
@@ -254,11 +254,16 @@ const RENDERERS = {
 export default function PoolTable({ pools, columns, rsiData, source = 'vfat', onSort, sortKey, sortDir }) {
   const [expandedId, setExpandedId] = useState(null);
 
+  // Reset expand on tab/source change or pool list change
+  useEffect(() => { setExpandedId(null); }, [source, pools]);
+
   const renderCell = RENDERERS[source] || renderRaydiumCell;
 
   const toggleExpand = (poolId) => {
     setExpandedId((prev) => (prev === poolId ? null : poolId));
   };
+
+  const showChart = source === 'vfat';
 
   return (
     <div className="pool-table-wrapper">
@@ -303,12 +308,12 @@ export default function PoolTable({ pools, columns, rsiData, source = 'vfat', on
                     )
                   ))}
                 </tr>
-                {/* Chart row: ALWAYS in DOM, toggled via CSS. No add/remove = no DOM leak. */}
+                {/* Chart row: ALWAYS in DOM for VFat, toggled via CSS. Never adds/removes <tr>. */}
                 <tr
-                  className={`chart-row${isExpanded ? '' : ' chart-hidden'}`}
+                  className={`chart-row${isExpanded && showChart ? '' : ' chart-hidden'}`}
                 >
                   <td colSpan={columns.length}>
-                    {isExpanded && source === 'vfat' && <PoolChart pool={pool} />}
+                    {isExpanded && showChart && <PoolChart pool={pool} />}
                   </td>
                 </tr>
               </Fragment>
