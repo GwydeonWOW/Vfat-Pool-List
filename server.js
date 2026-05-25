@@ -372,7 +372,7 @@ async function fetchAllSicklePositions(chainId) {
 
   const extraPositions = [];
   let idx = 0;
-  const CONCURRENCY = 25;
+  const CONCURRENCY = 50;
 
   async function processNext() {
     while (idx < missingSickles.length) {
@@ -586,8 +586,9 @@ app.get('/api/cache-positions/:chainId', async (req, res) => {
   });
 });
 
-// Pool analysis endpoint — returns instantly from cache, triggers background fill if needed
+// Pool analysis endpoint — waits for full scan to return complete holder data
 app.get('/api/pool-analysis', async (req, res) => {
+  req.setTimeout(300000); // 5 min — full sickle scan can take a few minutes
   const chainId = Number(req.query.chainId);
   const address = (req.query.address || '').trim();
   if (!chainId || !address) {
@@ -597,44 +598,19 @@ app.get('/api/pool-analysis', async (req, res) => {
   try {
     const poolInfo = findPoolInCache(chainId, address);
 
-    // Try to read from full cache first
-    const fullCache = readCache(`sickle-positions-${chainId}.json`);
-    if (fullCache?.positions?.length > 0) {
-      // Full cache exists — use it directly
-      const farmPositions = filterPositionsForPool(fullCache.positions, poolInfo, address);
-      return res.json(buildAnalysisResponse(poolInfo, farmPositions, chainId));
+    // Fetch all positions (uses cache if fresh, otherwise full scan)
+    const { positions } = await fetchAllSicklePositions(chainId);
+
+    if (positions.length === 0) {
+      return res.json({
+        pool: poolInfo || { chainId },
+        holders: { total: 0, totalValue: 0, top: [] },
+        warning: 'Could not fetch positions for this chain (API timeout or no data).',
+      });
     }
 
-    // No full cache — use fast all-open-positions + trigger background fill
-    let basePositions = [];
-    try {
-      const allData = await infoFetch(`${INFO_API}/all-open-positions?chain_id=${chainId}`);
-      basePositions = (allData.data || []).map((p) => ({
-        sickle_address: p.sickle_address?.toLowerCase(),
-        owner_address: (p.owner_address || p.sickle_address || '').toLowerCase(),
-        token_id: p.token_id,
-        type: p.type || '',
-        staking_contract: p.staking_contract?.toLowerCase() || null,
-        pool_address: null,
-        farm_address: null,
-        price: p.price || 0,
-        protocol_name: p.protocol_name || '',
-        underlying: (p.underlying_assets || []).map((u) => ({
-          symbol: u.symbol || '',
-          address: u.address?.toLowerCase() || '',
-        })),
-      })).filter(p => p.price > 0);
-    } catch {}
-
-    const farmPositions = filterPositionsForPool(basePositions, poolInfo, address);
-
-    // Trigger background gap-fill for this chain
-    fetchAllSicklePositions(chainId).catch(() => {});
-
-    res.json({
-      ...buildAnalysisResponse(poolInfo, farmPositions, chainId),
-      warning: 'Full scan in progress. Refresh in ~2 min for complete results.',
-    });
+    const farmPositions = filterPositionsForPool(positions, poolInfo, address);
+    res.json(buildAnalysisResponse(poolInfo, farmPositions, chainId));
   } catch (err) {
     console.error('[PoolAnalysis] Error:', err.message);
     res.status(500).json({ error: err.message });

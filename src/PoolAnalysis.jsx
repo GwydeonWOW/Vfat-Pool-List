@@ -60,7 +60,7 @@ export default function PoolAnalysis() {
       {loading && (
         <div className="analysis-loading">
           <div className="loading-spinner" />
-          <span>Fetching positions for {CHAINS[chainId]?.name || `Chain ${chainId}`}... This may take up to 30s on first load.</span>
+          <span>Scanning all positions on {CHAINS[chainId]?.name || `Chain ${chainId}`}... First load takes 1-3 min for complete data. Subsequent queries use cache.</span>
         </div>
       )}
 
