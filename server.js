@@ -421,17 +421,55 @@ async function fetchAllSicklePositions(chainId) {
   return result;
 }
 
-function findPoolInCache(chainId, address) {
-  const vfat = readCache('vfat.json');
-  if (!vfat?.pools) return null;
+async function findPoolInfo(chainId, address) {
   const addr = address.toLowerCase();
-  return vfat.pools.find(
-    (p) => p.chainId === chainId &&
-      (p.poolAddr?.toLowerCase() === addr || p.farmAddr?.toLowerCase() === addr)
-  ) || null;
+
+  // 1. Try local vfat cache
+  const vfat = readCache('vfat.json');
+  if (vfat?.pools) {
+    const found = vfat.pools.find(
+      (p) => p.chainId === chainId &&
+        (p.poolAddr?.toLowerCase() === addr || p.farmAddr?.toLowerCase() === addr)
+    );
+    if (found) return found;
+  }
+
+  // 2. Fallback: live lookup from vfat API (includes pools filtered out of cache)
+  try {
+    const farms = await fetchJSON(`${VFAT_BASE}?chainId=${chainId}`);
+    for (const farm of farms) {
+      const poolAddr = (farm.pool?.address || '').toLowerCase();
+      const farmAddr = (farm.address || '').toLowerCase();
+      if (poolAddr === addr || farmAddr === addr) {
+        const pool = farm.pool || {};
+        const snap = farm.snapshot || {};
+        const underlying = pool.underlying || [];
+        return {
+          pair: underlying.map((u) => u.symbol || '').join('/'),
+          protocol: farm.protocol?.name || '?',
+          type: farm.type || '',
+          tvl: snap.poolLiquidity || 0,
+          apr: snap.apr || 0,
+          stakingApr: snap.stakingApr || 0,
+          rangePct: parseFloat(((1.0001 ** (pool.tickSpacing || 1) - 1) * 100).toFixed(2)),
+          tickSpacing: pool.tickSpacing || 0,
+          rewardsWeek: snap.rewardsPerWeek || 0,
+          inRangeRatio: snap.poolLiquidity > 0 ? ((snap.inRangeLiquidity || 0) / snap.poolLiquidity * 100) : 0,
+          poolAddr: pool.address || addr,
+          farmAddr: farm.address || addr,
+          underlying: underlying.map((u) => ({ symbol: u.symbol || '', address: u.address || '' })),
+        };
+      }
+    }
+  } catch (err) {
+    console.log(`[findPoolInfo] Live lookup failed: ${err.message}`);
+  }
+
+  return null;
 }
 
 // Match positions to a pool using ALL strategies, combine results without duplicates
+// When poolInfo is null, derives token pair from matched positions to find ALL holders
 function filterPositionsForPool(positions, poolInfo, inputAddr) {
   const addr = inputAddr.toLowerCase();
   const poolAddr = poolInfo?.poolAddr?.toLowerCase();
@@ -448,36 +486,36 @@ function filterPositionsForPool(positions, poolInfo, inputAddr) {
     }
   }
 
-  // Strategy 1: Direct pool_address match (from open-positions-v2)
+  // Phase 1: Direct address matching
   for (const p of positions) {
     if (p.pool_address && (p.pool_address === poolAddr || p.pool_address === addr)) addUnique(p);
-  }
-
-  // Strategy 2: farm_address match
-  for (const p of positions) {
     if (p.farm_address && (p.farm_address === farmAddr || p.farm_address === addr)) addUnique(p);
-  }
-
-  // Strategy 3: staking_contract match
-  for (const p of positions) {
     if (p.staking_contract && (p.staking_contract === farmAddr || p.staking_contract === poolAddr || p.staking_contract === addr)) addUnique(p);
   }
 
-  // Strategy 4: Underlying token pair match
+  // Phase 2: Token pair matching
+  // If poolInfo has tokens use those; otherwise derive from matched positions
+  let poolTokens = null;
   if (poolInfo?.underlying?.length >= 2) {
-    const poolTokens = new Set(
-      poolInfo.underlying.map((u) => u.address?.toLowerCase()).filter(Boolean)
-    );
-    if (poolTokens.size >= 2) {
-      for (const p of positions) {
-        const posTokens = new Set(
-          (p.underlying || []).map((a) => a.address).filter(Boolean)
-        );
-        if ([...poolTokens].every((t) => posTokens.has(t))) addUnique(p);
-      }
+    const tokens = poolInfo.underlying.map((u) => u.address?.toLowerCase()).filter(Boolean);
+    if (tokens.length >= 2) poolTokens = new Set(tokens);
+  }
+  if (!poolTokens && results.length > 0) {
+    // Derive token pair from first matched position
+    const tokens = (results[0].underlying || []).map((u) => u.address?.toLowerCase()).filter(Boolean);
+    if (tokens.length >= 2) poolTokens = new Set(tokens);
+  }
+
+  if (poolTokens && poolTokens.size >= 2) {
+    for (const p of positions) {
+      const posTokens = new Set(
+        (p.underlying || []).map((a) => a.address?.toLowerCase()).filter(Boolean)
+      );
+      if ([...poolTokens].every((t) => posTokens.has(t))) addUnique(p);
     }
   }
 
+  console.log(`[Filter] poolInfo=${!!poolInfo} poolAddr=${poolAddr} farmAddr=${farmAddr} addr=${addr} tokenMatch=${!!poolTokens} results=${results.length}`);
   return results;
 }
 
@@ -596,7 +634,7 @@ app.get('/api/pool-analysis', async (req, res) => {
   }
 
   try {
-    const poolInfo = findPoolInCache(chainId, address);
+    const poolInfo = await findPoolInfo(chainId, address);
     console.log(`[PoolAnalysis] Chain ${chainId}, address ${address}, pool found: ${!!poolInfo}`);
 
     // Step 1: Fast base from all-open-positions
