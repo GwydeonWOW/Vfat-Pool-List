@@ -431,29 +431,37 @@ function findPoolInCache(chainId, address) {
   ) || null;
 }
 
-// Match positions to a pool using multiple strategies
+// Match positions to a pool using ALL strategies, combine results without duplicates
 function filterPositionsForPool(positions, poolInfo, inputAddr) {
   const addr = inputAddr.toLowerCase();
   const poolAddr = poolInfo?.poolAddr?.toLowerCase();
   const farmAddr = poolInfo?.farmAddr?.toLowerCase();
 
+  const seen = new Set();
+  const results = [];
+
+  function addUnique(pos) {
+    const key = `${pos.sickle_address}-${pos.token_id}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      results.push(pos);
+    }
+  }
+
   // Strategy 1: Direct pool_address match (from open-positions-v2)
-  let matched = positions.filter(
-    (p) => p.pool_address && (p.pool_address === poolAddr || p.pool_address === addr)
-  );
-  if (matched.length > 0) return matched;
+  for (const p of positions) {
+    if (p.pool_address && (p.pool_address === poolAddr || p.pool_address === addr)) addUnique(p);
+  }
 
   // Strategy 2: farm_address match
-  matched = positions.filter(
-    (p) => p.farm_address && (p.farm_address === farmAddr || p.farm_address === addr)
-  );
-  if (matched.length > 0) return matched;
+  for (const p of positions) {
+    if (p.farm_address && (p.farm_address === farmAddr || p.farm_address === addr)) addUnique(p);
+  }
 
   // Strategy 3: staking_contract match
-  matched = positions.filter(
-    (p) => p.staking_contract && (p.staking_contract === farmAddr || p.staking_contract === poolAddr || p.staking_contract === addr)
-  );
-  if (matched.length > 0) return matched;
+  for (const p of positions) {
+    if (p.staking_contract && (p.staking_contract === farmAddr || p.staking_contract === poolAddr || p.staking_contract === addr)) addUnique(p);
+  }
 
   // Strategy 4: Underlying token pair match
   if (poolInfo?.underlying?.length >= 2) {
@@ -461,17 +469,16 @@ function filterPositionsForPool(positions, poolInfo, inputAddr) {
       poolInfo.underlying.map((u) => u.address?.toLowerCase()).filter(Boolean)
     );
     if (poolTokens.size >= 2) {
-      matched = positions.filter((p) => {
+      for (const p of positions) {
         const posTokens = new Set(
           (p.underlying || []).map((a) => a.address).filter(Boolean)
         );
-        return [...poolTokens].every((t) => posTokens.has(t));
-      });
-      if (matched.length > 0) return matched;
+        if ([...poolTokens].every((t) => posTokens.has(t))) addUnique(p);
+      }
     }
   }
 
-  return [];
+  return results;
 }
 
 // ── Auth routes ──
