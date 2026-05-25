@@ -586,7 +586,7 @@ app.get('/api/cache-positions/:chainId', async (req, res) => {
   });
 });
 
-// Pool analysis endpoint
+// Pool analysis endpoint — returns instantly from cache, triggers background fill if needed
 app.get('/api/pool-analysis', async (req, res) => {
   const chainId = Number(req.query.chainId);
   const address = (req.query.address || '').trim();
@@ -595,67 +595,84 @@ app.get('/api/pool-analysis', async (req, res) => {
   }
 
   try {
-    // Resolve pool from vfat cache
     const poolInfo = findPoolInCache(chainId, address);
 
-    // Fetch positions for this chain (queries all sickles via open-positions-v2)
-    const { positions } = await fetchAllSicklePositions(chainId);
-
-    if (positions.length === 0) {
-      return res.json({
-        pool: poolInfo || { chainId },
-        holders: { total: 0, totalValue: 0, top: [] },
-        warning: 'Could not fetch positions for this chain (API timeout or no data).',
-      });
+    // Try to read from full cache first
+    const fullCache = readCache(`sickle-positions-${chainId}.json`);
+    if (fullCache?.positions?.length > 0) {
+      // Full cache exists — use it directly
+      const farmPositions = filterPositionsForPool(fullCache.positions, poolInfo, address);
+      return res.json(buildAnalysisResponse(poolInfo, farmPositions, chainId));
     }
 
-    // Filter positions using multi-strategy matching
-    const farmPositions = filterPositionsForPool(positions, poolInfo, address);
+    // No full cache — use fast all-open-positions + trigger background fill
+    let basePositions = [];
+    try {
+      const allData = await infoFetch(`${INFO_API}/all-open-positions?chain_id=${chainId}`);
+      basePositions = (allData.data || []).map((p) => ({
+        sickle_address: p.sickle_address?.toLowerCase(),
+        owner_address: (p.owner_address || p.sickle_address || '').toLowerCase(),
+        token_id: p.token_id,
+        type: p.type || '',
+        staking_contract: p.staking_contract?.toLowerCase() || null,
+        pool_address: null,
+        farm_address: null,
+        price: p.price || 0,
+        protocol_name: p.protocol_name || '',
+        underlying: (p.underlying_assets || []).map((u) => ({
+          symbol: u.symbol || '',
+          address: u.address?.toLowerCase() || '',
+        })),
+      })).filter(p => p.price > 0);
+    } catch {}
 
-    // Aggregate by owner
-    const byOwner = {};
-    for (const pos of farmPositions) {
-      const owner = (pos.owner_address || pos.sickle_address || '').toLowerCase();
-      if (!owner) continue;
-      if (!byOwner[owner]) byOwner[owner] = { address: owner, value: 0, positions: 0 };
-      byOwner[owner].value += pos.price || 0;
-      byOwner[owner].positions += 1;
-    }
+    const farmPositions = filterPositionsForPool(basePositions, poolInfo, address);
 
-    const holders = Object.values(byOwner).sort((a, b) => b.value - a.value);
-    const totalValue = holders.reduce((s, h) => s + h.value, 0);
-
-    const top = holders.slice(0, 100).map((h, i) => ({
-      rank: i + 1,
-      address: h.address,
-      value: parseFloat(h.value.toFixed(2)),
-      pct: totalValue > 0 ? parseFloat(((h.value / totalValue) * 100).toFixed(1)) : 0,
-      positions: h.positions,
-    }));
+    // Trigger background gap-fill for this chain
+    fetchAllSicklePositions(chainId).catch(() => {});
 
     res.json({
-      pool: poolInfo ? {
-        pair: poolInfo.pair,
-        protocol: poolInfo.protocol,
-        type: poolInfo.type,
-        tvl: poolInfo.tvl,
-        apr: poolInfo.apr,
-        stakingApr: poolInfo.stakingApr,
-        rangePct: poolInfo.rangePct,
-        tickSpacing: poolInfo.tickSpacing,
-        rewardsWeek: poolInfo.rewardsWeek,
-        inRangeRatio: poolInfo.inRangeRatio,
-        poolAddr: poolInfo.poolAddr,
-        farmAddr: poolInfo.farmAddr,
-        underlying: poolInfo.underlying,
-      } : { chainId, address },
-      holders: { total: holders.length, totalValue: parseFloat(totalValue.toFixed(2)), top },
+      ...buildAnalysisResponse(poolInfo, farmPositions, chainId),
+      warning: 'Full scan in progress. Refresh in ~2 min for complete results.',
     });
   } catch (err) {
     console.error('[PoolAnalysis] Error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
+
+function buildAnalysisResponse(poolInfo, farmPositions, chainId) {
+  const byOwner = {};
+  for (const pos of farmPositions) {
+    const owner = (pos.owner_address || pos.sickle_address || '').toLowerCase();
+    if (!owner) continue;
+    if (!byOwner[owner]) byOwner[owner] = { address: owner, value: 0, positions: 0 };
+    byOwner[owner].value += pos.price || 0;
+    byOwner[owner].positions += 1;
+  }
+
+  const holders = Object.values(byOwner).sort((a, b) => b.value - a.value);
+  const totalValue = holders.reduce((s, h) => s + h.value, 0);
+
+  const top = holders.slice(0, 100).map((h, i) => ({
+    rank: i + 1,
+    address: h.address,
+    value: parseFloat(h.value.toFixed(2)),
+    pct: totalValue > 0 ? parseFloat(((h.value / totalValue) * 100).toFixed(1)) : 0,
+    positions: h.positions,
+  }));
+
+  return {
+    pool: poolInfo ? {
+      pair: poolInfo.pair, protocol: poolInfo.protocol, type: poolInfo.type,
+      tvl: poolInfo.tvl, apr: poolInfo.apr, stakingApr: poolInfo.stakingApr,
+      rangePct: poolInfo.rangePct, tickSpacing: poolInfo.tickSpacing,
+      rewardsWeek: poolInfo.rewardsWeek, inRangeRatio: poolInfo.inRangeRatio,
+      poolAddr: poolInfo.poolAddr, farmAddr: poolInfo.farmAddr, underlying: poolInfo.underlying,
+    } : { chainId },
+    holders: { total: holders.length, totalValue: parseFloat(totalValue.toFixed(2)), top },
+  };
+}
 
 // ── Serve static files (dist/) ──
 // Cache-bust JS/CSS assets (they have content hashes in filenames)
