@@ -586,9 +586,9 @@ app.get('/api/cache-positions/:chainId', async (req, res) => {
   });
 });
 
-// Pool analysis endpoint — waits for full scan to return complete holder data
+// Pool analysis endpoint — always fetches fresh data for the target pool
 app.get('/api/pool-analysis', async (req, res) => {
-  req.setTimeout(300000); // 5 min — full sickle scan can take a few minutes
+  req.setTimeout(300000); // 5 min
   const chainId = Number(req.query.chainId);
   const address = (req.query.address || '').trim();
   if (!chainId || !address) {
@@ -597,19 +597,100 @@ app.get('/api/pool-analysis', async (req, res) => {
 
   try {
     const poolInfo = findPoolInCache(chainId, address);
+    console.log(`[PoolAnalysis] Chain ${chainId}, address ${address}, pool found: ${!!poolInfo}`);
 
-    // Fetch all positions (uses cache if fresh, otherwise full scan)
-    const { positions } = await fetchAllSicklePositions(chainId);
+    // Step 1: Fast base from all-open-positions
+    let basePositions = [];
+    try {
+      const allData = await infoFetch(`${INFO_API}/all-open-positions?chain_id=${chainId}`);
+      basePositions = (allData.data || []).map((p) => ({
+        sickle_address: p.sickle_address?.toLowerCase(),
+        owner_address: (p.owner_address || p.sickle_address || '').toLowerCase(),
+        token_id: p.token_id,
+        type: p.type || '',
+        staking_contract: p.staking_contract?.toLowerCase() || null,
+        pool_address: null,
+        farm_address: null,
+        price: Number(p.price) || 0,
+        protocol_name: p.protocol_name || '',
+        underlying: (p.underlying_assets || []).map((u) => ({
+          symbol: u.symbol || '',
+          address: u.address?.toLowerCase() || '',
+        })),
+      })).filter(p => p.price > 0);
+      console.log(`[PoolAnalysis] ${basePositions.length} positions from all-open-positions`);
+    } catch (err) {
+      console.log(`[PoolAnalysis] all-open-positions failed: ${err.message}`);
+    }
 
-    if (positions.length === 0) {
+    // Step 2: Query ALL sickles for this chain to find positions not in the base data
+    console.log(`[PoolAnalysis] Starting full sickle scan for chain ${chainId}...`);
+    const sicklesData = await fetchJSON('https://api.vfat.io/v4/sickles');
+    const allSickles = sicklesData
+      .filter((s) => s.chainId === chainId)
+      .map((s) => ({ sickle: s.sickleAddress?.toLowerCase(), admin: s.adminAddress?.toLowerCase() }))
+      .filter((s) => s.sickle);
+    console.log(`[PoolAnalysis] ${allSickles.length} sickles on chain ${chainId}`);
+
+    const knownSickles = new Set(basePositions.map((p) => p.sickle_address).filter(Boolean));
+    const missingSickles = allSickles.filter((s) => !knownSickles.has(s.sickle));
+    console.log(`[PoolAnalysis] ${missingSickles.length} sickles not in base data — querying individually`);
+
+    // Query missing sickles with high concurrency
+    const extraPositions = [];
+    let idx = 0;
+    const CONCURRENCY = 75;
+
+    async function processNext() {
+      while (idx < missingSickles.length) {
+        const { sickle, admin } = missingSickles[idx++];
+        try {
+          const data = await infoFetch(
+            `${INFO_API}/open-positions-v2?chain_id=${chainId}&sickle_address=${sickle}`
+          );
+          for (const pos of data.data || []) {
+            if (pos.price > 0) {
+              extraPositions.push({
+                sickle_address: sickle,
+                owner_address: admin || sickle,
+                token_id: pos.token_id,
+                type: pos.type || '',
+                staking_contract: pos.staking_contract?.toLowerCase() || null,
+                pool_address: pos.nft?.pool_address?.toLowerCase() || null,
+                farm_address: pos.farm_address?.toLowerCase() || null,
+                price: pos.price || 0,
+                protocol_name: pos.protocol_name || '',
+                underlying: (pos.underlying || []).map((u) => ({
+                  symbol: u.symbol || '',
+                  address: u.address?.toLowerCase() || '',
+                })),
+              });
+            }
+          }
+        } catch { /* skip failed */ }
+      }
+    }
+
+    await Promise.all(
+      Array.from({ length: Math.min(CONCURRENCY, missingSickles.length) }, () => processNext())
+    );
+
+    // Merge all positions
+    const allPositions = [...basePositions, ...extraPositions];
+    console.log(`[PoolAnalysis] Total: ${allPositions.length} positions (${basePositions.length} base + ${extraPositions.length} extra)`);
+
+    // Cache for future queries
+    writeCache(`sickle-positions-${chainId}.json`, { timestamp: Date.now(), positions: allPositions });
+
+    if (allPositions.length === 0) {
       return res.json({
         pool: poolInfo || { chainId },
         holders: { total: 0, totalValue: 0, top: [] },
-        warning: 'Could not fetch positions for this chain (API timeout or no data).',
       });
     }
 
-    const farmPositions = filterPositionsForPool(positions, poolInfo, address);
+    const farmPositions = filterPositionsForPool(allPositions, poolInfo, address);
+    console.log(`[PoolAnalysis] ${farmPositions.length} positions matched for pool`);
     res.json(buildAnalysisResponse(poolInfo, farmPositions, chainId));
   } catch (err) {
     console.error('[PoolAnalysis] Error:', err.message);
