@@ -1085,6 +1085,16 @@ body {
   border-radius: 8px;
 }
 
+.analysis-warning {
+  text-align: center;
+  padding: 16px;
+  color: var(--orange);
+  background: var(--bg-secondary);
+  border: 1px solid var(--orange);
+  border-radius: 8px;
+  font-size: 14px;
+}
+
 /* Responsive analysis */
 @media (max-width: 768px) {
   .analysis-input {

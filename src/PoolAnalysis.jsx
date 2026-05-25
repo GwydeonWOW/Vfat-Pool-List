@@ -117,6 +117,9 @@ export default function PoolAnalysis() {
           </div>
 
           {/* Top holders table */}
+          {result?.warning && (
+            <div className="analysis-warning">{result.warning}</div>
+          )}
           {holders?.top?.length > 0 ? (
             <div className="holders-table-wrapper">
               <table className="holders-table">
@@ -156,8 +159,8 @@ export default function PoolAnalysis() {
                 </tbody>
               </table>
             </div>
-          ) : (
-            <div className="no-holders">No positions found for this pool.</div>
+          ) : !result?.warning && (
+            <div className="no-holders">No VFAT positions found for this pool. Holders data only includes positions managed through VFAT sickle contracts.</div>
           )}
         </div>
       )}

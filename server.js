@@ -325,14 +325,19 @@ async function fetchPositions(chainId) {
   if (cached && Date.now() - cached.timestamp < POSITIONS_TTL) return cached;
 
   console.log(`[Positions] Fetching chain ${chainId}...`);
-  const data = await fetchJSON(`${INFO_API}/all-open-positions?chain_id=${chainId}`);
-  const result = {
-    timestamp: Date.now(),
-    positions: data.data || data || [],
-  };
-  writeCache(filename, result);
-  console.log(`[Positions] Chain ${chainId}: ${result.positions.length} positions cached`);
-  return result;
+  try {
+    const data = await fetchJSON(`${INFO_API}/all-open-positions?chain_id=${chainId}`);
+    const result = {
+      timestamp: Date.now(),
+      positions: data.data || data || [],
+    };
+    writeCache(filename, result);
+    console.log(`[Positions] Chain ${chainId}: ${result.positions.length} positions cached`);
+    return result;
+  } catch (err) {
+    console.error(`[Positions] Chain ${chainId} fetch failed:`, err.message);
+    return { timestamp: Date.now(), positions: [] };
+  }
 }
 
 function findPoolInCache(chainId, address) {
@@ -343,6 +348,48 @@ function findPoolInCache(chainId, address) {
     (p) => p.chainId === chainId &&
       (p.poolAddr?.toLowerCase() === addr || p.farmAddr?.toLowerCase() === addr)
   ) || null;
+}
+
+// Match positions to a pool using multiple strategies:
+// 1. staking_contract == farmAddr (works for PCS V3, AERO gauges)
+// 2. staking_contract == poolAddr (some pools where farmAddr == poolAddr)
+// 3. Underlying token pair match (for UNI V3/V4, Thena, etc.)
+function filterPositionsForPool(positions, poolInfo, inputAddr) {
+  const addr = inputAddr.toLowerCase();
+
+  // Strategy 1: Direct staking_contract match against farmAddr or poolAddr
+  const farmAddr = poolInfo?.farmAddr?.toLowerCase();
+  const poolAddr = poolInfo?.poolAddr?.toLowerCase();
+
+  let matched = positions.filter((p) => {
+    const sc = p.staking_contract?.toLowerCase();
+    return sc === farmAddr || sc === poolAddr || sc === addr;
+  });
+
+  if (matched.length > 0) return matched;
+
+  // Strategy 2: Match by underlying token pair
+  if (poolInfo?.underlying?.length >= 2) {
+    const poolTokens = poolInfo.underlying
+      .map((u) => u.address?.toLowerCase())
+      .filter(Boolean)
+      .sort();
+
+    if (poolTokens.length >= 2) {
+      matched = positions.filter((p) => {
+        const posTokens = (p.underlying_assets || [])
+          .map((a) => a.address?.toLowerCase())
+          .filter(Boolean)
+          .sort();
+        return posTokens.length >= 2 &&
+          posTokens[0] === poolTokens[0] &&
+          posTokens[1] === poolTokens[1];
+      });
+      if (matched.length > 0) return matched;
+    }
+  }
+
+  return [];
 }
 
 // ── Auth routes ──
@@ -452,15 +499,20 @@ app.get('/api/pool-analysis', async (req, res) => {
   try {
     // Resolve pool from vfat cache
     const poolInfo = findPoolInCache(chainId, address);
-    const farmAddr = poolInfo?.farmAddr?.toLowerCase() || address.toLowerCase();
 
-    // Fetch positions for this chain
+    // Fetch positions for this chain (gracefully handles timeouts)
     const { positions } = await fetchPositions(chainId);
 
-    // Filter positions for this farm
-    const farmPositions = positions.filter(
-      (p) => p.staking_contract?.toLowerCase() === farmAddr
-    );
+    if (positions.length === 0) {
+      return res.json({
+        pool: poolInfo || { chainId },
+        holders: { total: 0, totalValue: 0, top: [] },
+        warning: 'Could not fetch positions for this chain (API timeout or no data).',
+      });
+    }
+
+    // Filter positions using multi-strategy matching
+    const farmPositions = filterPositionsForPool(positions, poolInfo, address);
 
     // Aggregate by owner
     const byOwner = {};
@@ -498,7 +550,7 @@ app.get('/api/pool-analysis', async (req, res) => {
         poolAddr: poolInfo.poolAddr,
         farmAddr: poolInfo.farmAddr,
         underlying: poolInfo.underlying,
-      } : { farmAddr: address, chainId },
+      } : { chainId, address },
       holders: { total: holders.length, totalValue: parseFloat(totalValue.toFixed(2)), top },
     });
   } catch (err) {
