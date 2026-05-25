@@ -4,11 +4,13 @@ import { getToken } from './api';
 import { batchFetchRSI } from './api';
 import PoolTable, { VFAT_COLUMNS, RAYDIUM_COLUMNS, TURBOS_COLUMNS } from './PoolTable';
 import Login, { isAuthenticated, clearAuth } from './Auth';
+import PoolAnalysis from './PoolAnalysis';
 
 const TABS = [
   { key: 'vfat', label: 'VFat' },
   { key: 'raydium', label: 'Raydium' },
   { key: 'turbos', label: 'Turbos Finance' },
+  { key: 'analysis', label: 'Pool Analysis' },
 ];
 
 const chainEntries = Object.entries(CHAINS);
@@ -331,6 +333,11 @@ export default function App() {
         </div>
       )}
 
+      {/* Pool Analysis tab */}
+      {activeTab === 'analysis' ? (
+        <PoolAnalysis />
+      ) : (
+      <>
       {/* Filters */}
       {showFilters && (
         <div className="filters">
@@ -417,6 +424,8 @@ export default function App() {
             </div>
           )}
         </>
+      )}
+      </>
       )}
     </div>
   );

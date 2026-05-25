@@ -315,6 +315,36 @@ async function refreshTurbos() {
   return cache;
 }
 
+// ── Pool Analysis (info-api.vf.at) ──
+const INFO_API = 'https://info-api.vf.at';
+const POSITIONS_TTL = 15 * 60 * 1000;
+
+async function fetchPositions(chainId) {
+  const filename = `positions-${chainId}.json`;
+  const cached = readCache(filename);
+  if (cached && Date.now() - cached.timestamp < POSITIONS_TTL) return cached;
+
+  console.log(`[Positions] Fetching chain ${chainId}...`);
+  const data = await fetchJSON(`${INFO_API}/all-open-positions?chain_id=${chainId}`);
+  const result = {
+    timestamp: Date.now(),
+    positions: data.data || data || [],
+  };
+  writeCache(filename, result);
+  console.log(`[Positions] Chain ${chainId}: ${result.positions.length} positions cached`);
+  return result;
+}
+
+function findPoolInCache(chainId, address) {
+  const vfat = readCache('vfat.json');
+  if (!vfat?.pools) return null;
+  const addr = address.toLowerCase();
+  return vfat.pools.find(
+    (p) => p.chainId === chainId &&
+      (p.poolAddr?.toLowerCase() === addr || p.farmAddr?.toLowerCase() === addr)
+  ) || null;
+}
+
 // ── Auth routes ──
 
 app.post('/api/auth/login', (req, res) => {
@@ -407,6 +437,72 @@ app.get('/api/refresh/:source', async (req, res) => {
     else return res.status(400).json({ error: 'Unknown source' });
     res.json({ ok: true, pools: result.pools.length, timestamp: result.timestamp });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Pool analysis endpoint
+app.get('/api/pool-analysis', async (req, res) => {
+  const chainId = Number(req.query.chainId);
+  const address = (req.query.address || '').trim();
+  if (!chainId || !address) {
+    return res.status(400).json({ error: 'chainId and address are required' });
+  }
+
+  try {
+    // Resolve pool from vfat cache
+    const poolInfo = findPoolInCache(chainId, address);
+    const farmAddr = poolInfo?.farmAddr?.toLowerCase() || address.toLowerCase();
+
+    // Fetch positions for this chain
+    const { positions } = await fetchPositions(chainId);
+
+    // Filter positions for this farm
+    const farmPositions = positions.filter(
+      (p) => p.staking_contract?.toLowerCase() === farmAddr
+    );
+
+    // Aggregate by owner
+    const byOwner = {};
+    for (const pos of farmPositions) {
+      const owner = (pos.owner_address || pos.sickle_address || '').toLowerCase();
+      if (!owner) continue;
+      if (!byOwner[owner]) byOwner[owner] = { address: owner, value: 0, positions: 0 };
+      byOwner[owner].value += pos.price || 0;
+      byOwner[owner].positions += 1;
+    }
+
+    const holders = Object.values(byOwner).sort((a, b) => b.value - a.value);
+    const totalValue = holders.reduce((s, h) => s + h.value, 0);
+
+    const top = holders.slice(0, 100).map((h, i) => ({
+      rank: i + 1,
+      address: h.address,
+      value: parseFloat(h.value.toFixed(2)),
+      pct: totalValue > 0 ? parseFloat(((h.value / totalValue) * 100).toFixed(1)) : 0,
+      positions: h.positions,
+    }));
+
+    res.json({
+      pool: poolInfo ? {
+        pair: poolInfo.pair,
+        protocol: poolInfo.protocol,
+        type: poolInfo.type,
+        tvl: poolInfo.tvl,
+        apr: poolInfo.apr,
+        stakingApr: poolInfo.stakingApr,
+        rangePct: poolInfo.rangePct,
+        tickSpacing: poolInfo.tickSpacing,
+        rewardsWeek: poolInfo.rewardsWeek,
+        inRangeRatio: poolInfo.inRangeRatio,
+        poolAddr: poolInfo.poolAddr,
+        farmAddr: poolInfo.farmAddr,
+        underlying: poolInfo.underlying,
+      } : { farmAddr: address, chainId },
+      holders: { total: holders.length, totalValue: parseFloat(totalValue.toFixed(2)), top },
+    });
+  } catch (err) {
+    console.error('[PoolAnalysis] Error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

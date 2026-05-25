@@ -27,16 +27,16 @@ async function fetchJSON(url) {
   return res.json();
 }
 
-// Chain ID -> { name, defiLlamaChain }
+// Chain ID -> { name, defiLlamaChain, explorer }
 export const CHAINS = {
-  8453: { name: 'Base', defiLlamaChain: 'base' },
-  56: { name: 'BSC', defiLlamaChain: 'bsc' },
-  43114: { name: 'Avalanche', defiLlamaChain: 'avax' },
-  137: { name: 'Polygon', defiLlamaChain: 'polygon' },
-  10: { name: 'Optimism', defiLlamaChain: 'optimism' },
-  146: { name: 'Sonic', defiLlamaChain: 'sonic' },
-  999: { name: 'Hype', defiLlamaChain: 'hyperliquid' },
-  143: { name: 'Monad', defiLlamaChain: 'monad' },
+  8453: { name: 'Base', defiLlamaChain: 'base', explorer: 'https://basescan.org' },
+  56: { name: 'BSC', defiLlamaChain: 'bsc', explorer: 'https://bscscan.com' },
+  43114: { name: 'Avalanche', defiLlamaChain: 'avax', explorer: 'https://snowtrace.io' },
+  137: { name: 'Polygon', defiLlamaChain: 'polygon', explorer: 'https://polygonscan.com' },
+  10: { name: 'Optimism', defiLlamaChain: 'optimism', explorer: 'https://optimistic.etherscan.io' },
+  146: { name: 'Sonic', defiLlamaChain: 'sonic', explorer: 'https://sonicscan.org' },
+  999: { name: 'Hype', defiLlamaChain: 'hyperliquid', explorer: 'https://www.hyperscan.com' },
+  143: { name: 'Monad', defiLlamaChain: 'monad', explorer: 'https://monadvision.com' },
 };
 
 export const MAJOR_TOKENS = [
@@ -80,6 +80,13 @@ export async function refreshBackend(source) {
  */
 export async function fetchStatus() {
   return fetchJSON(`${API_BASE}/status`);
+}
+
+/**
+ * Analyze a pool: get holders and pool info.
+ */
+export async function analyzePool(chainId, address) {
+  return fetchJSON(`${API_BASE}/pool-analysis?chainId=${chainId}&address=${encodeURIComponent(address)}`);
 }
 
 // ── DeFiLlama price charts (still client-side) ──
