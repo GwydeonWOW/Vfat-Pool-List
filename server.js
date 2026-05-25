@@ -333,12 +333,11 @@ async function fetchAllSicklePositions(chainId) {
 
   console.log(`[Positions] Fetching sickle positions for chain ${chainId}...`);
 
-  // 1. Get all sickle addresses from positions-summary
-  const summaryData = await infoFetch(`${INFO_API}/positions-summary`);
-  const users = summaryData.data || summaryData;
-  const chainKey = String(chainId);
-  const sickles = users
-    .map((u) => u.sickles_by_chain?.[chainKey]?.toLowerCase())
+  // 1. Get ALL sickle addresses from vfat v4 API (complete, 50K+ sickles)
+  const sicklesData = await fetchJSON('https://api.vfat.io/v4/sickles');
+  const sickles = sicklesData
+    .filter((s) => s.chainId === chainId)
+    .map((s) => s.sickleAddress?.toLowerCase())
     .filter(Boolean);
 
   if (sickles.length === 0) {
@@ -352,7 +351,7 @@ async function fetchAllSicklePositions(chainId) {
   // 2. Batch fetch open-positions-v2 for each sickle
   const allPositions = [];
   let idx = 0;
-  const CONCURRENCY = 15;
+  const CONCURRENCY = 25;
 
   async function processNext() {
     while (idx < sickles.length) {
@@ -546,6 +545,15 @@ app.get('/api/refresh/:source', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// Pre-cache sickle positions for a chain (background)
+app.get('/api/cache-positions/:chainId', async (req, res) => {
+  const chainId = Number(req.params.chainId);
+  res.json({ ok: true, message: 'Started caching positions in background' });
+  fetchAllSicklePositions(chainId).catch((err) => {
+    console.error(`[CachePositions] Chain ${chainId} error:`, err.message);
+  });
 });
 
 // Pool analysis endpoint
