@@ -319,25 +319,84 @@ async function refreshTurbos() {
 const INFO_API = 'https://info-api.vf.at';
 const POSITIONS_TTL = 15 * 60 * 1000;
 
-async function fetchPositions(chainId) {
-  const filename = `positions-${chainId}.json`;
+async function infoFetch(url) {
+  const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+// Cache sickle positions per chain (full data from open-positions-v2)
+async function fetchAllSicklePositions(chainId) {
+  const filename = `sickle-positions-${chainId}.json`;
   const cached = readCache(filename);
   if (cached && Date.now() - cached.timestamp < POSITIONS_TTL) return cached;
 
-  console.log(`[Positions] Fetching chain ${chainId}...`);
-  try {
-    const data = await fetchJSON(`${INFO_API}/all-open-positions?chain_id=${chainId}`);
-    const result = {
-      timestamp: Date.now(),
-      positions: data.data || data || [],
-    };
+  console.log(`[Positions] Fetching sickle positions for chain ${chainId}...`);
+
+  // 1. Get all sickle addresses from positions-summary
+  const summaryData = await infoFetch(`${INFO_API}/positions-summary`);
+  const users = summaryData.data || summaryData;
+  const chainKey = String(chainId);
+  const sickles = users
+    .map((u) => u.sickles_by_chain?.[chainKey]?.toLowerCase())
+    .filter(Boolean);
+
+  if (sickles.length === 0) {
+    const result = { timestamp: Date.now(), positions: [] };
     writeCache(filename, result);
-    console.log(`[Positions] Chain ${chainId}: ${result.positions.length} positions cached`);
     return result;
-  } catch (err) {
-    console.error(`[Positions] Chain ${chainId} fetch failed:`, err.message);
-    return { timestamp: Date.now(), positions: [] };
   }
+
+  console.log(`[Positions] Chain ${chainId}: ${sickles.length} sickles to query`);
+
+  // 2. Batch fetch open-positions-v2 for each sickle
+  const allPositions = [];
+  let idx = 0;
+  const CONCURRENCY = 15;
+
+  async function processNext() {
+    while (idx < sickles.length) {
+      const sickle = sickles[idx++];
+      try {
+        const data = await infoFetch(
+          `${INFO_API}/open-positions-v2?chain_id=${chainId}&sickle_address=${sickle}`
+        );
+        const positions = data.data || [];
+        for (const pos of positions) {
+          if (pos.price > 0) {
+            allPositions.push({
+              sickle_address: sickle,
+              owner_address: data.admin_address?.toLowerCase() || sickle,
+              token_id: pos.token_id,
+              type: pos.type,
+              staking_contract: pos.staking_contract || null,
+              pool_address: pos.nft?.pool_address?.toLowerCase() || null,
+              farm_address: pos.farm_address?.toLowerCase() || null,
+              price: pos.price || 0,
+              protocol_name: pos.protocol_name || '',
+              underlying: (pos.underlying || []).map((u) => ({
+                symbol: u.symbol || '',
+                address: u.address?.toLowerCase() || '',
+              })),
+            });
+          }
+        }
+      } catch {
+        // Skip failed sickle queries
+      }
+    }
+  }
+
+  const workers = Array.from(
+    { length: Math.min(CONCURRENCY, sickles.length) },
+    () => processNext()
+  );
+  await Promise.all(workers);
+
+  const result = { timestamp: Date.now(), positions: allPositions };
+  writeCache(filename, result);
+  console.log(`[Positions] Chain ${chainId}: ${allPositions.length} positions from ${sickles.length} sickles`);
+  return result;
 }
 
 function findPoolInCache(chainId, address) {
@@ -350,40 +409,41 @@ function findPoolInCache(chainId, address) {
   ) || null;
 }
 
-// Match positions to a pool using multiple strategies:
-// 1. staking_contract == farmAddr (works for PCS V3, AERO gauges)
-// 2. staking_contract == poolAddr (some pools where farmAddr == poolAddr)
-// 3. Underlying token pair match (for UNI V3/V4, Thena, etc.)
+// Match positions to a pool using multiple strategies
 function filterPositionsForPool(positions, poolInfo, inputAddr) {
   const addr = inputAddr.toLowerCase();
-
-  // Strategy 1: Direct staking_contract match against farmAddr or poolAddr
-  const farmAddr = poolInfo?.farmAddr?.toLowerCase();
   const poolAddr = poolInfo?.poolAddr?.toLowerCase();
+  const farmAddr = poolInfo?.farmAddr?.toLowerCase();
 
-  let matched = positions.filter((p) => {
-    const sc = p.staking_contract?.toLowerCase();
-    return sc === farmAddr || sc === poolAddr || sc === addr;
-  });
-
+  // Strategy 1: Direct pool_address match (from open-positions-v2)
+  let matched = positions.filter(
+    (p) => p.pool_address && (p.pool_address === poolAddr || p.pool_address === addr)
+  );
   if (matched.length > 0) return matched;
 
-  // Strategy 2: Match by underlying token pair
-  if (poolInfo?.underlying?.length >= 2) {
-    const poolTokens = poolInfo.underlying
-      .map((u) => u.address?.toLowerCase())
-      .filter(Boolean)
-      .sort();
+  // Strategy 2: farm_address match
+  matched = positions.filter(
+    (p) => p.farm_address && (p.farm_address === farmAddr || p.farm_address === addr)
+  );
+  if (matched.length > 0) return matched;
 
-    if (poolTokens.length >= 2) {
+  // Strategy 3: staking_contract match
+  matched = positions.filter(
+    (p) => p.staking_contract && (p.staking_contract === farmAddr || p.staking_contract === poolAddr || p.staking_contract === addr)
+  );
+  if (matched.length > 0) return matched;
+
+  // Strategy 4: Underlying token pair match
+  if (poolInfo?.underlying?.length >= 2) {
+    const poolTokens = new Set(
+      poolInfo.underlying.map((u) => u.address?.toLowerCase()).filter(Boolean)
+    );
+    if (poolTokens.size >= 2) {
       matched = positions.filter((p) => {
-        const posTokens = (p.underlying_assets || [])
-          .map((a) => a.address?.toLowerCase())
-          .filter(Boolean)
-          .sort();
-        return posTokens.length >= 2 &&
-          posTokens[0] === poolTokens[0] &&
-          posTokens[1] === poolTokens[1];
+        const posTokens = new Set(
+          (p.underlying || []).map((a) => a.address).filter(Boolean)
+        );
+        return [...poolTokens].every((t) => posTokens.has(t));
       });
       if (matched.length > 0) return matched;
     }
@@ -500,8 +560,8 @@ app.get('/api/pool-analysis', async (req, res) => {
     // Resolve pool from vfat cache
     const poolInfo = findPoolInCache(chainId, address);
 
-    // Fetch positions for this chain (gracefully handles timeouts)
-    const { positions } = await fetchPositions(chainId);
+    // Fetch positions for this chain (queries all sickles via open-positions-v2)
+    const { positions } = await fetchAllSicklePositions(chainId);
 
     if (positions.length === 0) {
       return res.json({
