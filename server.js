@@ -317,108 +317,11 @@ async function refreshTurbos() {
 
 // ── Pool Analysis (info-api.vf.at) ──
 const INFO_API = 'https://info-api.vf.at';
-const POSITIONS_TTL = 15 * 60 * 1000;
 
 async function infoFetch(url) {
   const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
   if (!res.ok) throw new Error(`API error: ${res.status}`);
   return res.json();
-}
-
-// Cache sickle positions per chain using hybrid approach
-async function fetchAllSicklePositions(chainId) {
-  const filename = `sickle-positions-${chainId}.json`;
-  const cached = readCache(filename);
-  if (cached && Date.now() - cached.timestamp < POSITIONS_TTL) return cached;
-
-  console.log(`[Positions] Fetching positions for chain ${chainId}...`);
-
-  // Step 1: Fast base from all-open-positions (covers ~99% of active positions)
-  let basePositions = [];
-  try {
-    const allData = await infoFetch(`${INFO_API}/all-open-positions?chain_id=${chainId}`);
-    basePositions = (allData.data || []).map((p) => ({
-      sickle_address: p.sickle_address?.toLowerCase(),
-      owner_address: (p.owner_address || p.sickle_address || '').toLowerCase(),
-      token_id: p.token_id,
-      type: p.type || '',
-      staking_contract: p.staking_contract?.toLowerCase() || null,
-      pool_address: null,
-      farm_address: null,
-      price: p.price || 0,
-      protocol_name: p.protocol_name || '',
-      underlying: (p.underlying_assets || []).map((u) => ({
-        symbol: u.symbol || '',
-        address: u.address?.toLowerCase() || '',
-      })),
-    }));
-    console.log(`[Positions] Chain ${chainId}: ${basePositions.length} from all-open-positions`);
-  } catch (err) {
-    console.log(`[Positions] Chain ${chainId}: all-open-positions failed (${err.message}), using full scan`);
-  }
-
-  // Step 2: Get complete sickle list from v4 API
-  const sicklesData = await fetchJSON('https://api.vfat.io/v4/sickles');
-  const allSickles = sicklesData
-    .filter((s) => s.chainId === chainId)
-    .map((s) => ({ sickle: s.sickleAddress?.toLowerCase(), admin: s.adminAddress?.toLowerCase() }))
-    .filter((s) => s.sickle);
-
-  // Step 3: Find sickles NOT in base data — only query those
-  const knownSickles = new Set(basePositions.map((p) => p.sickle_address).filter(Boolean));
-  const missingSickles = allSickles.filter((s) => !knownSickles.has(s.sickle));
-
-  console.log(`[Positions] Chain ${chainId}: ${missingSickles.length} sickles to query individually`);
-
-  const extraPositions = [];
-  let idx = 0;
-  const CONCURRENCY = 50;
-
-  async function processNext() {
-    while (idx < missingSickles.length) {
-      const { sickle, admin } = missingSickles[idx++];
-      try {
-        const data = await infoFetch(
-          `${INFO_API}/open-positions-v2?chain_id=${chainId}&sickle_address=${sickle}`
-        );
-        const positions = data.data || [];
-        for (const pos of positions) {
-          if (pos.price > 0) {
-            extraPositions.push({
-              sickle_address: sickle,
-              owner_address: admin || sickle,
-              token_id: pos.token_id,
-              type: pos.type || '',
-              staking_contract: pos.staking_contract?.toLowerCase() || null,
-              pool_address: pos.nft?.pool_address?.toLowerCase() || null,
-              farm_address: pos.farm_address?.toLowerCase() || null,
-              price: pos.price || 0,
-              protocol_name: pos.protocol_name || '',
-              underlying: (pos.underlying || []).map((u) => ({
-                symbol: u.symbol || '',
-                address: u.address?.toLowerCase() || '',
-              })),
-            });
-          }
-        }
-      } catch {
-        // Skip failed queries (rate limit, timeout, etc.)
-      }
-    }
-  }
-
-  const workers = Array.from(
-    { length: Math.min(CONCURRENCY, missingSickles.length) },
-    () => processNext()
-  );
-  await Promise.all(workers);
-
-  // Merge: base + extras
-  const allPositions = [...basePositions, ...extraPositions];
-  const result = { timestamp: Date.now(), positions: allPositions };
-  writeCache(filename, result);
-  console.log(`[Positions] Chain ${chainId}: ${allPositions.length} total (${basePositions.length} base + ${extraPositions.length} extra from ${missingSickles.length} sickles)`);
-  return result;
 }
 
 async function findPoolInfo(chainId, address) {
@@ -613,15 +516,6 @@ app.get('/api/refresh/:source', async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-});
-
-// Pre-cache sickle positions for a chain (background)
-app.get('/api/cache-positions/:chainId', async (req, res) => {
-  const chainId = Number(req.params.chainId);
-  res.json({ ok: true, message: 'Started caching positions in background' });
-  fetchAllSicklePositions(chainId).catch((err) => {
-    console.error(`[CachePositions] Chain ${chainId} error:`, err.message);
-  });
 });
 
 // Fetch a single sickle's positions with shorter timeout and retry
