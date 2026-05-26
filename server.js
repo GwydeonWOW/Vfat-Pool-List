@@ -624,9 +624,42 @@ app.get('/api/cache-positions/:chainId', async (req, res) => {
   });
 });
 
-// Pool analysis endpoint — always fetches fresh data for the target pool
+// Fetch a single sickle's positions with shorter timeout and retry
+async function fetchSicklePositions(chainId, sickle, admin, retries = 1) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const data = await fetch(
+        `${INFO_API}/open-positions-v2?chain_id=${chainId}&sickle_address=${sickle}`,
+        { signal: AbortSignal.timeout(8000) }
+      ).then(r => r.json());
+      return (data.data || [])
+        .filter(pos => pos.price > 0)
+        .map(pos => ({
+          sickle_address: sickle,
+          owner_address: admin || sickle,
+          token_id: pos.token_id,
+          type: pos.type || '',
+          staking_contract: pos.staking_contract?.toLowerCase() || null,
+          pool_address: pos.nft?.pool_address?.toLowerCase() || null,
+          farm_address: pos.farm_address?.toLowerCase() || null,
+          price: pos.price || 0,
+          protocol_name: pos.protocol_name || '',
+          underlying: (pos.underlying || []).map((u) => ({
+            symbol: u.symbol || '',
+            address: u.address?.toLowerCase() || '',
+          })),
+        }));
+    } catch (err) {
+      if (attempt < retries) await new Promise(r => setTimeout(r, 1000));
+      else return []; // give up
+    }
+  }
+  return [];
+}
+
+// Pool analysis endpoint
 app.get('/api/pool-analysis', async (req, res) => {
-  req.setTimeout(300000); // 5 min
+  req.setTimeout(600000); // 10 min
   const chainId = Number(req.query.chainId);
   const address = (req.query.address || '').trim();
   if (!chainId || !address) {
@@ -635,7 +668,7 @@ app.get('/api/pool-analysis', async (req, res) => {
 
   try {
     const poolInfo = await findPoolInfo(chainId, address);
-    console.log(`[PoolAnalysis] Chain ${chainId}, address ${address}, pool found: ${!!poolInfo}`);
+    console.log(`[PoolAnalysis] Chain ${chainId}, addr ${address}, poolInfo: ${!!poolInfo}, poolAddr=${poolInfo?.poolAddr}, farmAddr=${poolInfo?.farmAddr}`);
 
     // Step 1: Fast base from all-open-positions
     let basePositions = [];
@@ -656,56 +689,47 @@ app.get('/api/pool-analysis', async (req, res) => {
           address: u.address?.toLowerCase() || '',
         })),
       })).filter(p => p.price > 0);
-      console.log(`[PoolAnalysis] ${basePositions.length} positions from all-open-positions`);
+      console.log(`[PoolAnalysis] ${basePositions.length} from all-open-positions`);
     } catch (err) {
       console.log(`[PoolAnalysis] all-open-positions failed: ${err.message}`);
     }
 
-    // Step 2: Query ALL sickles for this chain to find positions not in the base data
-    console.log(`[PoolAnalysis] Starting full sickle scan for chain ${chainId}...`);
+    // Step 2: Find what the pool's tokens are (for targeted matching)
+    const poolTokens = poolInfo?.underlying?.length >= 2
+      ? new Set(poolInfo.underlying.map(u => u.address?.toLowerCase()).filter(Boolean))
+      : null;
+
+    // Pre-filter: find positions in base data that might belong to this pool
+    const baseMatches = filterPositionsForPool(basePositions, poolInfo, address);
+    console.log(`[PoolAnalysis] ${baseMatches.length} base matches`);
+
+    // Step 3: Get ALL sickles, find ones missing from base
     const sicklesData = await fetchJSON('https://api.vfat.io/v4/sickles');
     const allSickles = sicklesData
       .filter((s) => s.chainId === chainId)
       .map((s) => ({ sickle: s.sickleAddress?.toLowerCase(), admin: s.adminAddress?.toLowerCase() }))
       .filter((s) => s.sickle);
-    console.log(`[PoolAnalysis] ${allSickles.length} sickles on chain ${chainId}`);
 
     const knownSickles = new Set(basePositions.map((p) => p.sickle_address).filter(Boolean));
     const missingSickles = allSickles.filter((s) => !knownSickles.has(s.sickle));
-    console.log(`[PoolAnalysis] ${missingSickles.length} sickles not in base data — querying individually`);
+    console.log(`[PoolAnalysis] ${allSickles.length} total sickles, ${missingSickles.length} to query`);
 
-    // Query missing sickles with high concurrency
+    // Step 4: Query missing sickles with high concurrency + retry
     const extraPositions = [];
     let idx = 0;
-    const CONCURRENCY = 75;
+    let completed = 0;
+    let failed = 0;
+    const CONCURRENCY = 150;
 
     async function processNext() {
       while (idx < missingSickles.length) {
         const { sickle, admin } = missingSickles[idx++];
-        try {
-          const data = await infoFetch(
-            `${INFO_API}/open-positions-v2?chain_id=${chainId}&sickle_address=${sickle}`
-          );
-          for (const pos of data.data || []) {
-            if (pos.price > 0) {
-              extraPositions.push({
-                sickle_address: sickle,
-                owner_address: admin || sickle,
-                token_id: pos.token_id,
-                type: pos.type || '',
-                staking_contract: pos.staking_contract?.toLowerCase() || null,
-                pool_address: pos.nft?.pool_address?.toLowerCase() || null,
-                farm_address: pos.farm_address?.toLowerCase() || null,
-                price: pos.price || 0,
-                protocol_name: pos.protocol_name || '',
-                underlying: (pos.underlying || []).map((u) => ({
-                  symbol: u.symbol || '',
-                  address: u.address?.toLowerCase() || '',
-                })),
-              });
-            }
-          }
-        } catch { /* skip failed */ }
+        const positions = await fetchSicklePositions(chainId, sickle, admin);
+        if (positions.length > 0) extraPositions.push(...positions);
+        completed++;
+        if (completed % 500 === 0) {
+          console.log(`[PoolAnalysis] Progress: ${completed}/${missingSickles.length} sickles queried, ${extraPositions.length} extra positions found`);
+        }
       }
     }
 
@@ -713,22 +737,13 @@ app.get('/api/pool-analysis', async (req, res) => {
       Array.from({ length: Math.min(CONCURRENCY, missingSickles.length) }, () => processNext())
     );
 
-    // Merge all positions
+    console.log(`[PoolAnalysis] Scan complete: ${completed} queried, ${extraPositions.length} extra positions`);
+
+    // Step 5: Merge and match
     const allPositions = [...basePositions, ...extraPositions];
-    console.log(`[PoolAnalysis] Total: ${allPositions.length} positions (${basePositions.length} base + ${extraPositions.length} extra)`);
-
-    // Cache for future queries
-    writeCache(`sickle-positions-${chainId}.json`, { timestamp: Date.now(), positions: allPositions });
-
-    if (allPositions.length === 0) {
-      return res.json({
-        pool: poolInfo || { chainId },
-        holders: { total: 0, totalValue: 0, top: [] },
-      });
-    }
-
     const farmPositions = filterPositionsForPool(allPositions, poolInfo, address);
-    console.log(`[PoolAnalysis] ${farmPositions.length} positions matched for pool`);
+    console.log(`[PoolAnalysis] Total: ${allPositions.length} positions, ${farmPositions.length} matched for pool`);
+
     res.json(buildAnalysisResponse(poolInfo, farmPositions, chainId));
   } catch (err) {
     console.error('[PoolAnalysis] Error:', err.message);
