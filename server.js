@@ -568,40 +568,86 @@ app.get('/api/pool-analysis', async (req, res) => {
     const missingOwners = chainOwners.filter(o => !knownOwners.has(o.owner));
     console.log(`[PoolAnalysis] ${chainOwners.length} active owners, ${missingOwners.length} missing from base — querying by admin_address`);
 
-    // Step 3: Query missing owners by admin_address at concurrency 10
+    // Step 3: Query missing owners — try admin_address first, sickle_address fallback if empty
     const extraPositions = [];
     let idx = 0;
+    const CONCURRENCY = 5;
+
+    function parseV2Positions(data, owner, sickle) {
+      const out = [];
+      for (const pos of (data.data || [])) {
+        if (pos.price > 0) {
+          out.push({
+            sickle_address: pos.sickle_address?.toLowerCase() || sickle,
+            owner_address: owner,
+            token_id: pos.token_id,
+            staking_contract: pos.staking_contract?.toLowerCase() || null,
+            pool_address: pos.nft?.pool_address?.toLowerCase() || null,
+            farm_address: pos.farm_address?.toLowerCase() || null,
+            price: pos.price,
+            underlying: (pos.underlying || []).map(u => ({
+              symbol: u.symbol || '', address: u.address?.toLowerCase() || '',
+            })),
+          });
+        }
+      }
+      return out;
+    }
+
+    async function queryOwner(owner, sickle) {
+      // Try admin_address first
+      try {
+        const data = await fetch(
+          `${INFO_API}/open-positions-v2?chain_id=${chainId}&admin_address=${owner}`,
+          { signal: AbortSignal.timeout(15000) }
+        ).then(r => r.json());
+        const parsed = parseV2Positions(data, owner, sickle);
+        if (parsed.length > 0) return parsed;
+      } catch { /* fall through to sickle */ }
+
+      // Fallback: sickle_address (some users only respond to this)
+      try {
+        const data = await fetch(
+          `${INFO_API}/open-positions-v2?chain_id=${chainId}&sickle_address=${sickle}`,
+          { signal: AbortSignal.timeout(15000) }
+        ).then(r => r.json());
+        return parseV2Positions(data, owner, sickle);
+      } catch { /* skip */ }
+
+      return [];
+    }
+
+    const failedOwners = [];
 
     async function queryNext() {
       while (idx < missingOwners.length) {
         const { owner, sickle } = missingOwners[idx++];
-        try {
-          const data = await fetch(
-            `${INFO_API}/open-positions-v2?chain_id=${chainId}&admin_address=${owner}`,
-            { signal: AbortSignal.timeout(10000) }
-          ).then(r => r.json());
-          for (const pos of (data.data || [])) {
-            if (pos.price > 0) {
-              extraPositions.push({
-                sickle_address: pos.sickle_address?.toLowerCase() || sickle,
-                owner_address: owner,
-                token_id: pos.token_id,
-                staking_contract: pos.staking_contract?.toLowerCase() || null,
-                pool_address: pos.nft?.pool_address?.toLowerCase() || null,
-                farm_address: pos.farm_address?.toLowerCase() || null,
-                price: pos.price,
-                underlying: (pos.underlying || []).map(u => ({
-                  symbol: u.symbol || '', address: u.address?.toLowerCase() || '',
-                })),
-              });
-            }
-          }
-        } catch { /* skip failed */ }
+        const parsed = await queryOwner(owner, sickle);
+        if (parsed.length > 0) {
+          extraPositions.push(...parsed);
+        } else {
+          failedOwners.push({ owner, sickle });
+        }
       }
     }
 
-    await Promise.all(Array.from({ length: Math.min(10, missingOwners.length) }, () => queryNext()));
-    console.log(`[PoolAnalysis] ${extraPositions.length} extra positions from ${missingOwners.length} queries`);
+    await Promise.all(Array.from({ length: Math.min(CONCURRENCY, missingOwners.length) }, () => queryNext()));
+    console.log(`[PoolAnalysis] ${extraPositions.length} extra positions, ${failedOwners.length} owners returned 0 — retrying...`);
+
+    // Retry failed owners once (API inconsistency — same query can return different results)
+    if (failedOwners.length > 0) {
+      let retryIdx = 0;
+      async function retryNext() {
+        while (retryIdx < failedOwners.length) {
+          const { owner, sickle } = failedOwners[retryIdx++];
+          const parsed = await queryOwner(owner, sickle);
+          if (parsed.length > 0) extraPositions.push(...parsed);
+        }
+      }
+      await Promise.all(Array.from({ length: Math.min(CONCURRENCY, failedOwners.length) }, () => retryNext()));
+    }
+
+    console.log(`[PoolAnalysis] After retry: ${extraPositions.length} extra positions from ${missingOwners.length} queries`);
 
     // Step 4: Match and return
     const allPositions = [...basePositions, ...extraPositions];
