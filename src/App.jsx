@@ -179,11 +179,6 @@ export default function App() {
   }, []);
   useEffect(() => { if (authenticated) loadFavorites(); }, [authenticated, loadFavorites]);
 
-  // Filter VFat pools when chain selection changes
-  useEffect(() => {
-    if (activeTab === 'vfat') loadData('vfat');
-  }, [selectedChains]);
-
   if (authenticated == null) return <div className="loading">Checking session...</div>;
   if (!authenticated) {
     return <Login onLogin={() => setAuthenticated(true)} />;
@@ -223,18 +218,15 @@ export default function App() {
       })
     : rawPools;
 
-  // Min TVL always applies. Other filters only when panel is visible.
-  const afterMinTvl = afterSearch.filter((p) => p.tvl >= minTvl);
+  // Filters always apply; showFilters only controls panel visibility.
   const effectiveMinApr = activeTab === 'vfat' ? minApr : 0;
-  const afterFilters = showFilters
-    ? afterMinTvl.filter((p) => {
-        if (p.tvl > maxTvl) return false;
-        if (p.apr < effectiveMinApr) return false;
-        if (p.rangePct < minRange || p.rangePct > maxRange) return false;
-        if (activeTab === 'vfat' && p.rewardsWeek < minRewardsWeek) return false;
-        return true;
-      })
-    : afterMinTvl;
+  const afterFilters = afterSearch.filter((p) => {
+    if (p.tvl < minTvl || p.tvl > maxTvl) return false;
+    if (p.apr < effectiveMinApr) return false;
+    if (p.rangePct < minRange || p.rangePct > maxRange) return false;
+    if (activeTab === 'vfat' && p.rewardsWeek < minRewardsWeek) return false;
+    return true;
+  });
 
   const calcFn = SCORERS[activeTab] || calcGenericScore;
   const scored = afterFilters.map((p) => ({ ...p, _risk: p.riskScores?.[riskProfile], score: p.riskScores?.[riskProfile]?.total ?? calcFn(p) }));
@@ -268,8 +260,23 @@ export default function App() {
     : activeTab === 'raydium' ? RAYDIUM_COLUMNS : TURBOS_COLUMNS;
 
   const toggleFavorite = async (poolId) => {
-    if (favoriteIds.has(poolId)) await removeWatchlist(poolId); else await addWatchlist(poolId);
-    await loadFavorites();
+    const wasFavorite = favoriteIds.has(poolId);
+    setFavoriteIds(prev => {
+      const next = new Set(prev);
+      if (wasFavorite) next.delete(poolId); else next.add(poolId);
+      return next;
+    });
+    try {
+      if (wasFavorite) await removeWatchlist(poolId); else await addWatchlist(poolId);
+    } catch (err) {
+      setFavoriteIds(prev => {
+        const next = new Set(prev);
+        if (wasFavorite) next.add(poolId); else next.delete(poolId);
+        return next;
+      });
+      setError(err.message);
+      throw err;
+    }
   };
   const toggleCompare = (poolId) => setCompareIds(prev => prev.includes(poolId) ? prev.filter(id => id !== poolId) : prev.length < 4 ? [...prev, poolId] : prev);
 

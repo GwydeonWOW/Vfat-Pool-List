@@ -7,7 +7,12 @@ export default function WatchlistView({ onRemove, compareIds, onCompare }) {
   const [error, setError] = useState('');
   const load = () => fetchWatchlist().then(data => setItems(data.items || [])).catch(err => setError(err.message));
   useEffect(load, []);
-  const remove = async id => { await onRemove(id); await load(); };
+  const remove = async id => {
+    const previous = items;
+    setItems(current => current.filter(item => item.pool_id !== id));
+    try { await onRemove(id); }
+    catch (err) { setItems(previous); setError(err.message); }
+  };
   const pools = items.map(x => x.pool).filter(Boolean);
   return <section className="watchlist-view">
     <h2>Watchlist</h2>

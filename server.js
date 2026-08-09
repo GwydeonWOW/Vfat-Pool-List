@@ -644,12 +644,19 @@ app.post('/api/providers/:source/refresh', expensiveLimiter, async (req, res) =>
 app.get('/api/refresh/:source', (_req, res) => res.status(405).json({ error: 'Use POST /api/providers/:source/refresh' }));
 
 const PoolIdBody = z.object({ poolId: z.string().min(3).max(300) });
-function allCurrentPools() {
-  return Object.keys(PROVIDERS).flatMap(provider => enrichedCache(provider).pools);
+function currentPoolsById() {
+  const pools = Object.keys(PROVIDERS).flatMap(provider => readCache(`${provider}.json`)?.pools || []);
+  return new Map(pools.map(pool => [pool.id, pool]));
+}
+function enrichPool(pool) {
+  return pool ? { ...pool, riskScores: calculateRiskScores(pool, store.history(pool.id, Date.now() - 30 * 86400000)) } : null;
 }
 app.get('/api/watchlist', (_req, res) => {
-  const byId = new Map(allCurrentPools().map(pool => [pool.id, pool]));
-  res.json({ items: store.listWatchlist().map(item => ({ ...item, pool: byId.get(item.pool_id) || null, unavailable: !byId.has(item.pool_id) })) });
+  const byId = currentPoolsById();
+  res.json({ items: store.listWatchlist().map(item => {
+    const pool = byId.get(item.pool_id);
+    return { ...item, pool: enrichPool(pool), unavailable: !pool };
+  }) });
 });
 app.post('/api/watchlist', (req, res) => {
   const parsed = PoolIdBody.safeParse(req.body);
@@ -661,8 +668,8 @@ app.delete('/api/watchlist/:poolId', (req, res) => { store.removeWatchlist(req.p
 app.get('/api/compare', (req, res) => {
   const ids = String(req.query.poolIds || '').split(',').filter(Boolean);
   if (ids.length < 2 || ids.length > 4) return res.status(400).json({ error: 'Choose between 2 and 4 pools' });
-  const byId = new Map(allCurrentPools().map(pool => [pool.id, pool]));
-  res.json({ pools: ids.map(id => byId.get(id)).filter(Boolean), missing: ids.filter(id => !byId.has(id)) });
+  const byId = currentPoolsById();
+  res.json({ pools: ids.map(id => enrichPool(byId.get(id))).filter(Boolean), missing: ids.filter(id => !byId.has(id)) });
 });
 
 // Fetch a single sickle's positions with shorter timeout and retry
