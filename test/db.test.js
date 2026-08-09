@@ -18,4 +18,13 @@ describe('SQLite store', () => {
     expect(store.listWatchlist()[0].pool_id).toBe('demo:1');
     db.close();
   });
+
+  it('records a provider failure even without a previous cache', () => {
+    folder = mkdtempSync(join(tmpdir(), 'vfat-test-'));
+    const db = openDatabase(join(folder, 'test.sqlite'));
+    const store = createStore(db);
+    store.markProviderError('cetus', '404 Not Found');
+    expect(store.readProvider('cetus')).toMatchObject({ pools: [], status: 'degraded', error: '404 Not Found' });
+    db.close();
+  });
 });

@@ -507,7 +507,8 @@ async function refreshOrca() {
 }
 
 async function refreshCetus() {
-  const payload = await fetchJSON('https://api-sui.cetus.zone/v2/sui/pools_info');
+  const endpoint = process.env.CETUS_API_URL || 'https://api-sui.cetus.zone/v2/sui/pools_info';
+  const payload = await fetchJSON(endpoint);
   const rawPools = payload.data?.lp_list || payload.data?.pools || payload.data || [];
   const pools = (Array.isArray(rawPools) ? rawPools : []).map(p => normalizedPool('cetus', {
     address: p.address || p.pool_id, chain: 'sui', protocol: 'Cetus', type: 'CLMM',
@@ -876,7 +877,11 @@ app.listen(PORT, () => {
   console.log(`[Init] Cached providers: ${caches.filter(([,cache]) => cache).length}/${enabled.length}`);
   const now = Date.now();
   for (const [provider, cache] of caches) {
-    if (!cache || now - cache.timestamp > REFRESH_INTERVAL) refreshProvider(provider);
+    if (!cache || now - cache.timestamp > REFRESH_INTERVAL) {
+      refreshProvider(provider).catch(err => {
+        console.error(`[Init] ${provider} refresh failed; server remains available: ${err.message}`);
+      });
+    }
   }
 
   // Start periodic refresh
