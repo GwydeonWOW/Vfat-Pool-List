@@ -128,7 +128,7 @@ export default function PoolAnalysis() {
                     <th>#</th>
                     <th>Address</th>
                     <th>Value</th>
-                    <th>% of Pool</th>
+                    <th>% of detected VFat positions</th>
                     <th>Positions</th>
                   </tr>
                 </thead>

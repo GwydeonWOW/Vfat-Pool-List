@@ -1,15 +1,20 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { CHAINS, fetchAllPools, fetchRaydiumPools, fetchTurbosPools, refreshBackend, fetchStatus, setOnAuthFail } from './api';
-import { getToken } from './api';
-import { batchFetchRSI } from './api';
+import { useState, useEffect, useCallback } from 'react';
+import { CHAINS, fetchAllPools, fetchRaydiumPools, fetchTurbosPools, fetchProviderPools, refreshBackend, fetchStatus, setOnAuthFail, fetchWatchlist, addWatchlist, removeWatchlist } from './api';
 import PoolTable, { VFAT_COLUMNS, RAYDIUM_COLUMNS, TURBOS_COLUMNS } from './PoolTable';
 import Login, { isAuthenticated, clearAuth } from './Auth';
 import PoolAnalysis from './PoolAnalysis';
+import WatchlistView from './WatchlistView';
+import CompareView from './CompareView';
 
 const TABS = [
   { key: 'vfat', label: 'VFat' },
   { key: 'raydium', label: 'Raydium' },
   { key: 'turbos', label: 'Turbos Finance' },
+  { key: 'uniswap', label: 'Uniswap' },
+  { key: 'orca', label: 'Orca' },
+  { key: 'cetus', label: 'Cetus' },
+  { key: 'watchlist', label: 'Watchlist' },
+  { key: 'compare', label: 'Compare' },
   { key: 'analysis', label: 'Pool Analysis' },
 ];
 
@@ -55,7 +60,9 @@ const SCORERS = {
 };
 
 export default function App() {
-  const [authenticated, setAuthenticated] = useState(isAuthenticated());
+  const [authenticated, setAuthenticated] = useState(null);
+
+  useEffect(() => { isAuthenticated().then(setAuthenticated); }, []);
 
   // Register auth fail callback (no page reload)
   useEffect(() => {
@@ -68,8 +75,10 @@ export default function App() {
   const [vfatPools, setVfatPools] = useState([]);
   const [raydiumPools, setRaydiumPools] = useState([]);
   const [turbosPools, setTurbosPools] = useState([]);
-  const [rsiData, setRsiData] = useState(new Map());
-  const [rsiLoading, setRsiLoading] = useState(false);
+  const [extraPools, setExtraPools] = useState({ uniswap: [], orca: [], cetus: [] });
+  const [favoriteIds, setFavoriteIds] = useState(new Set());
+  const [compareIds, setCompareIds] = useState([]);
+  const [riskProfile, setRiskProfile] = useState(() => localStorage.getItem('risk_profile') || 'balanced');
 
   // UI state
   const [loading, setLoading] = useState(false);
@@ -98,14 +107,12 @@ export default function App() {
   const [minRewardsWeek, setMinRewardsWeek] = useState(1000);
   const [showFilters, setShowFilters] = useState(false);
 
-  const rsiAbortRef = useRef(false);
-
   // Fetch last refresh time from backend
   const loadRefreshStatus = useCallback(async () => {
     try {
       const status = await fetchStatus();
       const source = status[activeTab];
-      if (source) setRefreshAgo(source.age);
+      setRefreshAgo(source ? source.age : null);
     } catch { /* ignore */ }
   }, [activeTab]);
 
@@ -119,7 +126,7 @@ export default function App() {
   // ── Load from backend ──
 
   const loadData = useCallback(async (tab) => {
-    if (!getToken()) return;
+    if (['analysis', 'watchlist', 'compare'].includes(tab)) return;
     setLoading(true);
     setError(null);
     try {
@@ -130,9 +137,13 @@ export default function App() {
       } else if (tab === 'raydium') {
         pools = await fetchRaydiumPools();
         setRaydiumPools(pools);
-      } else {
+      } else if (tab === 'turbos') {
         pools = await fetchTurbosPools();
         setTurbosPools(pools);
+      } else {
+        const data = await fetchProviderPools(tab);
+        pools = data.pools || [];
+        setExtraPools(prev => ({ ...prev, [tab]: pools }));
       }
       setLastUpdated(Date.now());
     } catch (err) {
@@ -143,6 +154,7 @@ export default function App() {
   }, []);
 
   const handleRefresh = async () => {
+    if (['analysis', 'watchlist', 'compare'].includes(activeTab)) return;
     setRefreshing(true);
     try {
       await refreshBackend(activeTab);
@@ -162,31 +174,17 @@ export default function App() {
     loadData(activeTab);
   }, [activeTab, loadData]);
 
+  const loadFavorites = useCallback(async () => {
+    try { const data = await fetchWatchlist(); setFavoriteIds(new Set((data.items || []).map(x => x.pool_id))); } catch {}
+  }, []);
+  useEffect(() => { if (authenticated) loadFavorites(); }, [authenticated, loadFavorites]);
+
   // Filter VFat pools when chain selection changes
   useEffect(() => {
     if (activeTab === 'vfat') loadData('vfat');
   }, [selectedChains]);
 
-  // RSI fetch for VFat
-  useEffect(() => {
-    if (activeTab !== 'vfat' || loading || vfatPools.length === 0) return;
-    rsiAbortRef.current = false;
-    const aborted = () => rsiAbortRef.current;
-
-    const topPools = [...vfatPools]
-      .sort((a, b) => b.apr - a.apr)
-      .slice(0, 80);
-
-    setRsiLoading(true);
-    batchFetchRSI(topPools, 3).then((rsiMap) => {
-      if (!aborted()) {
-        setRsiData(rsiMap);
-        setRsiLoading(false);
-      }
-    });
-    return () => { rsiAbortRef.current = true; };
-  }, [vfatPools, loading, activeTab]);
-
+  if (authenticated == null) return <div className="loading">Checking session...</div>;
   if (!authenticated) {
     return <Login onLogin={() => setAuthenticated(true)} />;
   }
@@ -210,7 +208,8 @@ export default function App() {
   const rawPools = loading ? []
     : activeTab === 'vfat'
       ? vfatPools.filter((p) => selectedChains.includes(p.chainId))
-      : activeTab === 'raydium' ? raydiumPools : turbosPools;
+      : activeTab === 'raydium' ? raydiumPools
+        : activeTab === 'turbos' ? turbosPools : (extraPools[activeTab] || []);
 
   const searchLower = search.toLowerCase();
   const afterSearch = searchLower
@@ -238,7 +237,7 @@ export default function App() {
     : afterMinTvl;
 
   const calcFn = SCORERS[activeTab] || calcGenericScore;
-  const scored = afterFilters.map((p) => ({ ...p, score: calcFn(p) }));
+  const scored = afterFilters.map((p) => ({ ...p, _risk: p.riskScores?.[riskProfile], score: p.riskScores?.[riskProfile]?.total ?? calcFn(p) }));
   const sorted = [...scored].sort((a, b) => {
     const aVal = a[sortKey] ?? 0;
     const bVal = b[sortKey] ?? 0;
@@ -268,6 +267,12 @@ export default function App() {
   const currentColumns = activeTab === 'vfat' ? VFAT_COLUMNS
     : activeTab === 'raydium' ? RAYDIUM_COLUMNS : TURBOS_COLUMNS;
 
+  const toggleFavorite = async (poolId) => {
+    if (favoriteIds.has(poolId)) await removeWatchlist(poolId); else await addWatchlist(poolId);
+    await loadFavorites();
+  };
+  const toggleCompare = (poolId) => setCompareIds(prev => prev.includes(poolId) ? prev.filter(id => id !== poolId) : prev.length < 4 ? [...prev, poolId] : prev);
+
   return (
     <div className="app">
       <header className="header">
@@ -278,13 +283,16 @@ export default function App() {
               Data: {refreshAgo < 60 ? `${refreshAgo}s` : `${Math.floor(refreshAgo/60)}m`} ago
             </span>
           )}
-          <button onClick={handleRefresh} disabled={loading || refreshing} className="refresh-btn">
+          <select aria-label="Risk profile" value={riskProfile} onChange={e => { setRiskProfile(e.target.value); localStorage.setItem('risk_profile', e.target.value); }} className="chain-select">
+            <option value="conservative">Conservative</option><option value="balanced">Balanced</option><option value="aggressive">Aggressive</option>
+          </select>
+          <button onClick={handleRefresh} disabled={loading || refreshing || ['analysis','watchlist','compare'].includes(activeTab)} className="refresh-btn">
             {refreshing ? 'Refreshing...' : loading ? 'Loading...' : 'Refresh'}
           </button>
           <button onClick={() => setShowFilters(!showFilters)} className="filter-toggle-btn">
             Filters {showFilters ? '▲' : '▼'}
           </button>
-          <button onClick={() => { fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: `Bearer ${localStorage.getItem('vfat_token')}` } }); clearAuth(); setAuthenticated(false); }} className="logout-btn">
+          <button onClick={() => { clearAuth(); setAuthenticated(false); }} className="logout-btn">
             Logout
           </button>
         </div>
@@ -304,6 +312,7 @@ export default function App() {
       </div>
 
       {/* Search */}
+      {!['analysis','watchlist','compare'].includes(activeTab) && (
       <div className="search-bar">
         <input
           type="text"
@@ -314,6 +323,7 @@ export default function App() {
         />
         {search && <button className="search-clear" onClick={() => handleSearch('')}>✕</button>}
       </div>
+      )}
 
       {/* Chain selector (VFat only) */}
       {activeTab === 'vfat' && (
@@ -336,6 +346,10 @@ export default function App() {
       {/* Pool Analysis tab */}
       {activeTab === 'analysis' ? (
         <PoolAnalysis />
+      ) : activeTab === 'watchlist' ? (
+        <WatchlistView profile={riskProfile} onRemove={toggleFavorite} compareIds={compareIds} onCompare={toggleCompare} />
+      ) : activeTab === 'compare' ? (
+        <CompareView poolIds={compareIds} profile={riskProfile} onRemove={toggleCompare} />
       ) : (
       <>
       {/* Filters */}
@@ -359,7 +373,7 @@ export default function App() {
           </div>
           <div className="filter-row">
             <label>
-              Range: %
+                Tick interval: %
               <input type="number" step="0.1" value={minRange} onChange={(e) => { setMinRange(Number(e.target.value)); setPage(1); }} />
               -
               <input type="number" step="0.1" value={maxRange} onChange={(e) => { setMaxRange(Number(e.target.value)); setPage(1); }} />
@@ -380,9 +394,6 @@ export default function App() {
         {loading
           ? `Loading ${activeTab === 'vfat' ? 'VFat' : activeTab === 'raydium' ? 'Raydium' : 'Turbos'} pools...`
           : `${filteredCount} pools found (of ${totalPools} total)`}
-        {activeTab === 'vfat' && !loading && (
-          <span>{rsiLoading ? ' | Loading RSI...' : ` | RSI: ${rsiData.size} pools`}</span>
-        )}
       </div>
 
       {loading ? (
@@ -393,11 +404,14 @@ export default function App() {
             key={pagePools.map(p => p.id).join('|')}
             pools={pagePools}
             columns={currentColumns}
-            rsiData={rsiData}
             source={activeTab}
             onSort={handleSort}
             sortKey={sortKey}
             sortDir={sortDir}
+            favoriteIds={favoriteIds}
+            compareIds={compareIds}
+            onFavorite={toggleFavorite}
+            onCompare={toggleCompare}
           />
 
           {/* Pagination */}

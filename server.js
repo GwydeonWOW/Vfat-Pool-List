@@ -1,8 +1,14 @@
 import express from 'express';
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
+import { readFileSync, mkdirSync, existsSync, unlinkSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
+import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
+import { rateLimit } from 'express-rate-limit';
+import { z } from 'zod';
+import { openDatabase, createStore } from './lib/db.js';
+import { calculateRiskScores } from './lib/risk.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -10,40 +16,75 @@ const PORT = process.env.PORT || 3000;
 
 // Parse JSON bodies
 app.use(express.json());
+app.use(cookieParser());
+app.use(helmet({ contentSecurityPolicy: { directives: {
+  defaultSrc: ["'self'"], scriptSrc: ["'self'"], styleSrc: ["'self'", "'unsafe-inline'"],
+  imgSrc: ["'self'", 'data:', 'https:'], connectSrc: ["'self'", 'https://coins.llama.fi'], objectSrc: ["'none'"],
+} } }));
 
 // ── Auth ──
 const AUTH_FILE = join(__dirname, 'data', 'auth.json');
+const DATA_DIR = join(__dirname, 'data');
+ensureDataDir();
+const db = openDatabase(join(DATA_DIR, 'app.sqlite'));
+const store = createStore(db);
+const SESSION_MS = 24 * 60 * 60 * 1000;
+
+function passwordHash(password, salt = crypto.randomBytes(16).toString('hex')) {
+  const derived = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${derived}`;
+}
+
+function passwordMatches(password, encoded) {
+  const [salt, expected] = String(encoded).split(':');
+  if (!salt || !expected) return false;
+  const actual = crypto.scryptSync(password, salt, 64);
+  const expectedBuffer = Buffer.from(expected, 'hex');
+  return actual.length === expectedBuffer.length && crypto.timingSafeEqual(actual, expectedBuffer);
+}
 
 function getAuthConfig() {
-  if (existsSync(AUTH_FILE)) {
-    try { return JSON.parse(readFileSync(AUTH_FILE, 'utf-8')); } catch {}
-  }
-  return {
-    username: process.env.AUTH_USER || 'admin',
-    password: process.env.AUTH_PASS || 'changeme',
-  };
+  return db.prepare('SELECT * FROM users WHERE id=1').get() || null;
 }
 
 function saveAuthConfig(config) {
-  ensureDataDir();
-  writeFileSync(AUTH_FILE, JSON.stringify(config), 'utf-8');
+  const now = Date.now();
+  db.prepare(`INSERT INTO users(id,username,password_hash,created_at,updated_at) VALUES(1,?,?,?,?)
+    ON CONFLICT(id) DO UPDATE SET username=excluded.username,password_hash=excluded.password_hash,updated_at=excluded.updated_at`)
+    .run(config.username, passwordHash(config.password), now, now);
 }
 
 function generateToken() {
   return crypto.randomBytes(32).toString('hex');
 }
 
-const activeTokens = new Set();
+function hashToken(token) { return crypto.createHash('sha256').update(token).digest('hex'); }
+function createSession() {
+  const token = generateToken();
+  const now = Date.now();
+  db.prepare('INSERT INTO sessions(token_hash,expires_at,last_seen_at) VALUES(?,?,?)').run(hashToken(token), now + SESSION_MS, now);
+  return token;
+}
+function sessionToken(req) { return req.cookies.vfat_session || req.headers.authorization?.replace(/^Bearer\s+/i, ''); }
+function validSession(req) {
+  const token = sessionToken(req);
+  if (!token) return false;
+  const row = db.prepare('SELECT * FROM sessions WHERE token_hash=? AND expires_at>?').get(hashToken(token), Date.now());
+  if (!row) return false;
+  db.prepare('UPDATE sessions SET last_seen_at=?,expires_at=? WHERE token_hash=?').run(Date.now(), Date.now() + SESSION_MS, hashToken(token));
+  return true;
+}
 
 // ── Data directory ──
-const DATA_DIR = join(__dirname, 'data');
-
 function ensureDataDir() {
   if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
 }
 
 // ── JSON file cache ──
 function readCache(filename) {
+  const provider = filename.replace(/\.json$/, '');
+  const stored = store.readProvider(provider);
+  if (stored) return stored;
   const filepath = join(DATA_DIR, filename);
   if (!existsSync(filepath)) return null;
   try {
@@ -55,14 +96,14 @@ function readCache(filename) {
 }
 
 function writeCache(filename, data) {
-  ensureDataDir();
-  const filepath = join(DATA_DIR, filename);
-  writeFileSync(filepath, JSON.stringify(data), 'utf-8');
+  const provider = filename.replace(/\.json$/, '');
+  const pools = (data.pools || []).map((pool) => normalizedPool(provider, pool));
+  return store.writeProvider(provider, pools, data.timestamp || Date.now());
 }
 
 // ── Fetch helper ──
 async function fetchJSON(url) {
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
   if (!res.ok) throw new Error(`API error: ${res.status} ${res.statusText}`);
   return res.json();
 }
@@ -396,49 +437,147 @@ function filterPositionsForPool(positions, poolInfo, inputAddr) {
     if (p.staking_contract && (p.staking_contract === farmAddr || p.staking_contract === poolAddr || p.staking_contract === addr)) addUnique(p);
   }
 
-  // Phase 2: Token pair matching
-  // If poolInfo has tokens use those; otherwise derive from matched positions
-  let poolTokens = null;
-  if (poolInfo?.underlying?.length >= 2) {
-    const tokens = poolInfo.underlying.map((u) => u.address?.toLowerCase()).filter(Boolean);
-    if (tokens.length >= 2) poolTokens = new Set(tokens);
-  }
-  if (!poolTokens && results.length > 0) {
-    // Derive token pair from first matched position
-    const tokens = (results[0].underlying || []).map((u) => u.address?.toLowerCase()).filter(Boolean);
-    if (tokens.length >= 2) poolTokens = new Set(tokens);
-  }
-
-  if (poolTokens && poolTokens.size >= 2) {
-    for (const p of positions) {
-      const posTokens = new Set(
-        (p.underlying || []).map((a) => a.address?.toLowerCase()).filter(Boolean)
-      );
-      if ([...poolTokens].every((t) => posTokens.has(t))) addUnique(p);
-    }
-  }
-
-  console.log(`[Filter] poolInfo=${!!poolInfo} poolAddr=${poolAddr} farmAddr=${farmAddr} addr=${addr} tokenMatch=${!!poolTokens} results=${results.length}`);
+  // Token-pair fallback intentionally omitted: several CLMM pools can share the
+  // same pair while differing by protocol, fee tier, and tick spacing.
+  console.log(`[Filter] exact match poolInfo=${!!poolInfo} poolAddr=${poolAddr} farmAddr=${farmAddr} addr=${addr} results=${results.length}`);
   return results;
 }
 
 // ── Auth routes ──
 
-app.post('/api/auth/login', (req, res) => {
+function bootstrapUser() {
+  if (getAuthConfig()) return;
+  let legacy = null;
+  if (existsSync(AUTH_FILE)) {
+    try { legacy = JSON.parse(readFileSync(AUTH_FILE, 'utf-8')); } catch {}
+  }
+  const username = legacy?.username || process.env.AUTH_USER;
+  const password = legacy?.password || process.env.AUTH_PASS;
+  if (!username || !password || password === 'changeme') {
+    throw new Error('Set AUTH_USER and a secure AUTH_PASS before first start');
+  }
+  saveAuthConfig({ username, password });
+  if (legacy) { unlinkSync(AUTH_FILE); console.warn('[Auth] Legacy credentials migrated to encrypted database'); }
+}
+
+// ── Additional concentrated-liquidity providers ──
+
+function normalizedPool(provider, raw) {
+  const address = raw.poolAddr || raw.address || raw.id;
+  return {
+    ...raw,
+    id: `${provider}:${raw.chain || raw.chainId || 'unknown'}:${address}`,
+    provider,
+    protocol: raw.protocol || provider[0].toUpperCase() + provider.slice(1),
+    poolAddr: address,
+    pair: raw.pair || (raw.underlying || []).map((t) => t.symbol || '?').join('/'),
+    tvl: Number(raw.tvl || 0), apr: Number(raw.apr || 0),
+    feeApr: Number(raw.feeApr || 0), rewardApr: Number(raw.rewardApr || 0),
+    volume24h: Number(raw.volume24h || 0), volume7d: Number(raw.volume7d || 0),
+    volume30d: Number(raw.volume30d || 0), price: Number(raw.price || 0),
+    dataQuality: raw.dataQuality || 'verified', updatedAt: Date.now(),
+  };
+}
+
+async function refreshOrca() {
+  const pools = [];
+  let next = null;
+  do {
+    const params = new URLSearchParams({ size: '100', stats: '24h,7d,30d', sortBy: 'tvl', sortDirection: 'desc', minTvl: '1000' });
+    if (next) params.set('next', next);
+    const payload = await fetchJSON(`https://api.orca.so/v2/solana/pools?${params}`);
+    for (const p of payload.data || []) {
+      const s24 = p.stats?.['24h'] || {}, s7 = p.stats?.['7d'] || {}, s30 = p.stats?.['30d'] || {};
+      const tvl = Number(p.tvlUsdc || 0);
+      const annual = (period, days) => Number(period.yieldOverTvl || 0) * 365 / days * 100;
+      pools.push(normalizedPool('orca', {
+        address: p.address, chain: 'solana', protocol: 'Orca', type: p.poolType || 'whirlpool',
+        underlying: [p.tokenA, p.tokenB].filter(Boolean).map(t => ({ symbol: t.symbol || '?', address: t.address || '' })),
+        tvl, apr: annual(s30, 30) || annual(s7, 7) || annual(s24, 1),
+        feeApr: tvl ? Number(s30.fees || s7.fees || s24.fees || 0) / tvl * (s30.fees ? 365/30 : s7.fees ? 365/7 : 365) * 100 : 0,
+        rewardApr: tvl ? Number(s30.rewards || s7.rewards || s24.rewards || 0) / tvl * (s30.rewards ? 365/30 : s7.rewards ? 365/7 : 365) * 100 : 0,
+        volume24h: Number(s24.volume || 0), volume7d: Number(s7.volume || 0), volume30d: Number(s30.volume || 0),
+        tickSpacing: Number(p.tickSpacing || 0), feePct: Number(p.feeRate || 0) / 1e6 * 100,
+        price: Number(p.price || 0), hasRealRewards: Number(s24.rewards || s7.rewards || 0) > 0,
+      }));
+    }
+    next = payload.meta?.next || null;
+  } while (next && pools.length < 2000);
+  return writeCache('orca.json', { timestamp: Date.now(), pools });
+}
+
+async function refreshCetus() {
+  const payload = await fetchJSON('https://api-sui.cetus.zone/v2/sui/pools_info');
+  const rawPools = payload.data?.lp_list || payload.data?.pools || payload.data || [];
+  const pools = (Array.isArray(rawPools) ? rawPools : []).map(p => normalizedPool('cetus', {
+    address: p.address || p.pool_id, chain: 'sui', protocol: 'Cetus', type: 'CLMM',
+    pair: `${p.coin_a?.symbol || p.symbol_a || '?'}/${p.coin_b?.symbol || p.symbol_b || '?'}`,
+    underlying: [
+      { symbol: p.coin_a?.symbol || p.symbol_a || '?', address: p.coin_a?.address || p.coin_type_a || '' },
+      { symbol: p.coin_b?.symbol || p.symbol_b || '?', address: p.coin_b?.address || p.coin_type_b || '' },
+    ],
+    tvl: p.tvl_in_usd || p.tvl || 0, apr: p.apr || p.total_apr || 0,
+    feeApr: p.fee_apr || 0, rewardApr: p.reward_apr || 0,
+    volume24h: p.vol_in_usd_24h || p.volume_24h || 0,
+    tickSpacing: Number(p.tick_spacing || 0), feePct: Number(p.fee_rate || 0) / 10000,
+    price: p.current_price || 0, hasRealRewards: Number(p.reward_apr || 0) > 0,
+    dataQuality: 'partial',
+  })).filter(p => p.poolAddr);
+  return writeCache('cetus.json', { timestamp: Date.now(), pools });
+}
+
+async function refreshUniswap() {
+  if (!process.env.UNISWAP_API_KEY) throw new Error('UNISWAP_API_KEY is not configured');
+  const base = process.env.UNISWAP_API_URL || 'https://interface.gateway.uniswap.org/v2/pools';
+  const payload = await fetch(base, { headers: { 'x-api-key': process.env.UNISWAP_API_KEY }, signal: AbortSignal.timeout(30000) });
+  if (!payload.ok) throw new Error(`Uniswap API error: ${payload.status}`);
+  const body = await payload.json();
+  const pools = (body.data?.pools || body.pools || []).map(p => normalizedPool('uniswap', {
+    address: p.address || p.id, chain: p.chain || p.chainId, protocol: 'Uniswap', type: p.version || 'V3',
+    underlying: [p.token0, p.token1].filter(Boolean).map(t => ({ symbol: t.symbol || '?', address: t.address || t.id || '' })),
+    tvl: p.tvlUSD || p.totalValueLockedUSD || 0, apr: p.apr || 0, feeApr: p.feeApr || p.apr || 0,
+    volume24h: p.volume24h || 0, volume7d: p.volume7d || 0, volume30d: p.volume30d || 0,
+    tickSpacing: p.tickSpacing || 0, feePct: Number(p.feeTier || 0) / 10000,
+  })).filter(p => p.poolAddr);
+  return writeCache('uniswap.json', { timestamp: Date.now(), pools });
+}
+
+const PROVIDERS = {
+  vfat: refreshVFat, raydium: refreshRaydium, turbos: refreshTurbos,
+  uniswap: refreshUniswap, orca: refreshOrca, cetus: refreshCetus,
+};
+const refreshLocks = new Map();
+async function refreshProvider(provider) {
+  if (!PROVIDERS[provider]) throw new Error('Unknown source');
+  if (refreshLocks.has(provider)) return refreshLocks.get(provider);
+  const previous = readCache(`${provider}.json`);
+  const task = PROVIDERS[provider]().catch(err => {
+    store.markProviderError(provider, err.message);
+    if (previous) return { ...previous, status: 'degraded', error: err.message };
+    throw err;
+  }).finally(() => refreshLocks.delete(provider));
+  refreshLocks.set(provider, task);
+  return task;
+}
+
+bootstrapUser();
+const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false });
+const expensiveLimiter = rateLimit({ windowMs: 60 * 1000, limit: 10, standardHeaders: true, legacyHeaders: false });
+
+app.post('/api/auth/login', loginLimiter, (req, res) => {
   const { username, password } = req.body || {};
   const config = getAuthConfig();
-  if (username === config.username && password === config.password) {
-    const token = generateToken();
-    activeTokens.add(token);
-    res.json({ ok: true, token });
+  if (config && username === config.username && passwordMatches(password || '', config.password_hash)) {
+    const token = createSession();
+    res.cookie('vfat_session', token, { httpOnly: true, sameSite: 'strict', secure: process.env.NODE_ENV === 'production', maxAge: SESSION_MS });
+    res.json({ ok: true });
   } else {
     res.status(401).json({ error: 'Invalid credentials' });
   }
 });
 
 app.post('/api/auth/change', (req, res) => {
-  const auth = req.headers.authorization;
-  if (!auth || !activeTokens.has(auth.replace('Bearer ', ''))) {
+  if (!validSession(req)) {
     return res.status(401).json({ error: 'Not authenticated' });
   }
   const { username, password } = req.body || {};
@@ -446,21 +585,25 @@ app.post('/api/auth/change', (req, res) => {
     return res.status(400).json({ error: 'Username and password required' });
   }
   saveAuthConfig({ username, password });
+  db.prepare('DELETE FROM sessions').run();
+  res.clearCookie('vfat_session');
   res.json({ ok: true });
 });
 
 app.post('/api/auth/logout', (req, res) => {
-  const auth = req.headers.authorization;
-  if (auth) activeTokens.delete(auth.replace('Bearer ', ''));
+  const token = sessionToken(req);
+  if (token) db.prepare('DELETE FROM sessions WHERE token_hash=?').run(hashToken(token));
+  res.clearCookie('vfat_session');
   res.json({ ok: true });
 });
+
+app.get('/api/auth/session', (req, res) => res.json({ authenticated: validSession(req) }));
 
 // ── Auth middleware (protect /api routes except auth) ──
 
 app.use('/api', (req, res, next) => {
   if (req.path.startsWith('/auth/')) return next();
-  const auth = req.headers.authorization;
-  if (!auth || !activeTokens.has(auth.replace('Bearer ', ''))) {
+  if (!validSession(req)) {
     return res.status(401).json({ error: 'Not authenticated' });
   }
   next();
@@ -468,59 +611,62 @@ app.use('/api', (req, res, next) => {
 
 // ── API routes ──
 
-app.get('/api/vfat', (req, res) => {
-  const cache = readCache('vfat.json');
+function enrichedCache(provider) {
+  const cache = readCache(`${provider}.json`);
   if (!cache) {
-    return res.json({ timestamp: null, pools: [], stale: true });
+    return { timestamp: null, pools: [], stale: true, status: provider === 'uniswap' && !process.env.UNISWAP_API_KEY ? 'disabled' : 'empty' };
   }
-  res.json({ ...cache, stale: Date.now() - cache.timestamp > 15 * 60 * 1000 });
-});
+  const pools = cache.pools.map(pool => ({ ...pool, riskScores: calculateRiskScores(pool, store.history(pool.id, Date.now() - 30 * 86400000)) }));
+  return { ...cache, pools, stale: Date.now() - cache.timestamp > 15 * 60 * 1000 };
+}
 
-app.get('/api/raydium', (req, res) => {
-  const cache = readCache('raydium.json');
-  if (!cache) {
-    return res.json({ timestamp: null, pools: [], stale: true });
-  }
-  res.json({ ...cache, stale: Date.now() - cache.timestamp > 15 * 60 * 1000 });
-});
-
-app.get('/api/turbos', (req, res) => {
-  const cache = readCache('turbos.json');
-  if (!cache) {
-    return res.json({ timestamp: null, pools: [], stale: true });
-  }
-  res.json({ ...cache, stale: Date.now() - cache.timestamp > 15 * 60 * 1000 });
-});
+for (const provider of Object.keys(PROVIDERS)) app.get(`/api/${provider}`, (req, res) => res.json(enrichedCache(provider)));
 
 app.get('/api/status', (req, res) => {
-  const vfat = readCache('vfat.json');
-  const raydium = readCache('raydium.json');
-  const turbos = readCache('turbos.json');
-  res.json({
-    vfat: vfat ? { pools: vfat.pools.length, age: Math.round((Date.now() - vfat.timestamp) / 1000) } : null,
-    raydium: raydium ? { pools: raydium.pools.length, age: Math.round((Date.now() - raydium.timestamp) / 1000) } : null,
-    turbos: turbos ? { pools: turbos.pools.length, age: Math.round((Date.now() - turbos.timestamp) / 1000) } : null,
-  });
+  const status = {};
+  for (const provider of Object.keys(PROVIDERS)) {
+    const cache = readCache(`${provider}.json`);
+    status[provider] = cache ? { pools: cache.pools.length, age: Math.round((Date.now() - cache.timestamp) / 1000), status: cache.status, error: cache.error } : null;
+  }
+  res.json(status);
 });
 
-// Manual refresh endpoint (GET to avoid reverse proxy POST issues)
-app.get('/api/refresh/:source', async (req, res) => {
-  const source = req.params.source;
+app.post('/api/providers/:source/refresh', expensiveLimiter, async (req, res) => {
+  const source = req.params.source.toLowerCase();
   try {
-    let result;
-    if (source === 'vfat') result = await refreshVFat();
-    else if (source === 'raydium') result = await refreshRaydium();
-    else if (source === 'turbos') result = await refreshTurbos();
-    else return res.status(400).json({ error: 'Unknown source' });
+    const result = await refreshProvider(source);
     res.json({ ok: true, pools: result.pools.length, timestamp: result.timestamp });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+app.get('/api/refresh/:source', (_req, res) => res.status(405).json({ error: 'Use POST /api/providers/:source/refresh' }));
+
+const PoolIdBody = z.object({ poolId: z.string().min(3).max(300) });
+function allCurrentPools() {
+  return Object.keys(PROVIDERS).flatMap(provider => enrichedCache(provider).pools);
+}
+app.get('/api/watchlist', (_req, res) => {
+  const byId = new Map(allCurrentPools().map(pool => [pool.id, pool]));
+  res.json({ items: store.listWatchlist().map(item => ({ ...item, pool: byId.get(item.pool_id) || null, unavailable: !byId.has(item.pool_id) })) });
+});
+app.post('/api/watchlist', (req, res) => {
+  const parsed = PoolIdBody.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: 'Invalid poolId' });
+  store.addWatchlist(parsed.data.poolId);
+  res.status(201).json({ ok: true });
+});
+app.delete('/api/watchlist/:poolId', (req, res) => { store.removeWatchlist(req.params.poolId); res.json({ ok: true }); });
+app.get('/api/compare', (req, res) => {
+  const ids = String(req.query.poolIds || '').split(',').filter(Boolean);
+  if (ids.length < 2 || ids.length > 4) return res.status(400).json({ error: 'Choose between 2 and 4 pools' });
+  const byId = new Map(allCurrentPools().map(pool => [pool.id, pool]));
+  res.json({ pools: ids.map(id => byId.get(id)).filter(Boolean), missing: ids.filter(id => !byId.has(id)) });
+});
 
 // Fetch a single sickle's positions with shorter timeout and retry
 // Pool analysis endpoint
-app.get('/api/pool-analysis', async (req, res) => {
+app.get('/api/pool-analysis', expensiveLimiter, async (req, res) => {
   req.setTimeout(300000); // 5 min
   const chainId = Number(req.query.chainId);
   const address = (req.query.address || '').trim();
@@ -714,9 +860,8 @@ const REFRESH_INTERVAL = 15 * 60 * 1000;
 
 async function refreshAll() {
   console.log('[Refresh] Starting background refresh...');
-  await refreshVFat();
-  await refreshRaydium();
-  await refreshTurbos();
+  const enabled = Object.keys(PROVIDERS).filter(provider => provider !== 'uniswap' || process.env.UNISWAP_API_KEY);
+  await Promise.allSettled(enabled.map(provider => refreshProvider(provider)));
   console.log('[Refresh] Done. Next refresh in 15 minutes.');
 }
 
@@ -726,19 +871,12 @@ app.listen(PORT, () => {
   console.log(`[Server] Running on port ${PORT}`);
 
   // Initial data load in background
-  const vfat = readCache('vfat.json');
-  const raydium = readCache('raydium.json');
-  const turbos = readCache('turbos.json');
-
-  if (vfat && raydium && turbos) {
-    console.log(`[Init] Cached data found: VFat ${vfat.pools.length}, Raydium ${raydium.pools.length}, Turbos ${turbos.pools.length}`);
-    const now = Date.now();
-    if (now - vfat.timestamp > REFRESH_INTERVAL) refreshVFat();
-    if (now - raydium.timestamp > REFRESH_INTERVAL) refreshRaydium();
-    if (now - turbos.timestamp > REFRESH_INTERVAL) refreshTurbos();
-  } else {
-    console.log('[Init] No cached data found, fetching all sources in background...');
-    refreshAll();
+  const enabled = Object.keys(PROVIDERS).filter(provider => provider !== 'uniswap' || process.env.UNISWAP_API_KEY);
+  const caches = enabled.map(provider => [provider, readCache(`${provider}.json`)]);
+  console.log(`[Init] Cached providers: ${caches.filter(([,cache]) => cache).length}/${enabled.length}`);
+  const now = Date.now();
+  for (const [provider, cache] of caches) {
+    if (!cache || now - cache.timestamp > REFRESH_INTERVAL) refreshProvider(provider);
   }
 
   // Start periodic refresh

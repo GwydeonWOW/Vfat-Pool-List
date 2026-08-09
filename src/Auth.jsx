@@ -1,23 +1,22 @@
 import { useState, useEffect } from 'react';
 
-const TOKEN_KEY = 'vfat_token';
-
 export function getToken() {
-  return localStorage.getItem(TOKEN_KEY);
+  return true;
 }
 
-export function isAuthenticated() {
-  return !!getToken();
+export async function isAuthenticated() {
+  try {
+    const res = await fetch('/api/auth/session', { credentials: 'same-origin' });
+    return res.ok && (await res.json()).authenticated;
+  } catch { return false; }
 }
 
 export function clearAuth() {
-  localStorage.removeItem(TOKEN_KEY);
+  return fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' }).catch(() => {});
 }
 
 async function authFetch(url, options = {}) {
-  const token = getToken();
-  const headers = { ...options.headers, Authorization: `Bearer ${token}` };
-  return fetch(url, { ...options, headers });
+  return fetch(url, { ...options, credentials: 'same-origin' });
 }
 
 export { authFetch };
@@ -31,9 +30,7 @@ export default function Login({ onLogin }) {
   const [newPass, setNewPass] = useState('');
   const [settingsMsg, setSettingsMsg] = useState('');
 
-  useEffect(() => {
-    if (isAuthenticated()) onLogin();
-  }, []);
+  useEffect(() => { isAuthenticated().then(ok => { if (ok) onLogin(); }); }, [onLogin]);
 
   const handleLogin = async (e) => {
     e.preventDefault();
@@ -45,7 +42,6 @@ export default function Login({ onLogin }) {
       });
       const data = await res.json();
       if (data.ok) {
-        localStorage.setItem(TOKEN_KEY, data.token);
         onLogin();
       } else {
         setError('Invalid username or password');
@@ -107,7 +103,7 @@ export default function Login({ onLogin }) {
           <button type="submit" className="login-btn">Sign In</button>
         </form>
 
-        {isAuthenticated() && (
+        {false && (
           <>
             <button
               className="login-settings-toggle"

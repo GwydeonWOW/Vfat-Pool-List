@@ -1,8 +1,6 @@
 // ── Frontend API - calls local backend ──
 
 const API_BASE = '/api';
-const TOKEN_KEY = 'vfat_token';
-
 let onAuthFail = null;
 
 export function setOnAuthFail(cb) {
@@ -10,16 +8,14 @@ export function setOnAuthFail(cb) {
 }
 
 export function getToken() {
-  return localStorage.getItem(TOKEN_KEY);
+  return true;
 }
 
 async function fetchJSON(url) {
-  const token = getToken();
   const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${token}` },
+    credentials: 'same-origin',
   });
   if (res.status === 401) {
-    localStorage.removeItem(TOKEN_KEY);
     if (onAuthFail) onAuthFail();
     throw new Error('Session expired');
   }
@@ -52,6 +48,11 @@ export async function fetchAllPools() {
   return data.pools || [];
 }
 
+export async function fetchProviderPools(provider) {
+  const data = await fetchJSON(`${API_BASE}/${provider}`);
+  return data;
+}
+
 /**
  * Fetch Raydium pools from local backend.
  */
@@ -72,8 +73,24 @@ export async function fetchTurbosPools() {
  * Trigger a manual refresh on the backend.
  */
 export async function refreshBackend(source) {
-  return fetchJSON(`${API_BASE}/refresh/${source}`);
+  const res = await fetch(`${API_BASE}/providers/${source}/refresh`, { method: 'POST', credentials: 'same-origin' });
+  if (res.status === 401) { if (onAuthFail) onAuthFail(); throw new Error('Session expired'); }
+  if (!res.ok) { const body = await res.json().catch(() => ({})); throw new Error(body.error || `API error: ${res.status}`); }
+  return res.json();
 }
+
+export async function fetchWatchlist() { return fetchJSON(`${API_BASE}/watchlist`); }
+export async function addWatchlist(poolId) {
+  const res = await fetch(`${API_BASE}/watchlist`, { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ poolId }) });
+  if (!res.ok) throw new Error('Could not add favorite');
+  return res.json();
+}
+export async function removeWatchlist(poolId) {
+  const res = await fetch(`${API_BASE}/watchlist/${encodeURIComponent(poolId)}`, { method: 'DELETE', credentials: 'same-origin' });
+  if (!res.ok) throw new Error('Could not remove favorite');
+  return res.json();
+}
+export async function comparePools(poolIds) { return fetchJSON(`${API_BASE}/compare?poolIds=${poolIds.map(encodeURIComponent).join(',')}`); }
 
 /**
  * Get backend cache status.
@@ -145,62 +162,3 @@ export const TIMEFRAMES = {
   day: '24h',
   week: '7d',
 };
-
-// ── RSI calculation ──
-
-export function calcRSI(prices, period = 14) {
-  if (prices.length < period + 1) return null;
-  let avgGain = 0, avgLoss = 0;
-  for (let i = 1; i <= period; i++) {
-    const change = prices[i] - prices[i - 1];
-    if (change > 0) avgGain += change;
-    else avgLoss += Math.abs(change);
-  }
-  avgGain /= period;
-  avgLoss /= period;
-  for (let i = period + 1; i < prices.length; i++) {
-    const change = prices[i] - prices[i - 1];
-    const gain = change > 0 ? change : 0;
-    const loss = change < 0 ? Math.abs(change) : 0;
-    avgGain = (avgGain * (period - 1) + gain) / period;
-    avgLoss = (avgLoss * (period - 1) + loss) / period;
-  }
-  if (avgLoss === 0) return 100;
-  const rs = avgGain / avgLoss;
-  return parseFloat((100 - 100 / (1 + rs)).toFixed(1));
-}
-
-export async function fetchRSI(chainId, tokenAddress) {
-  const prices = await getTokenPriceHistory(chainId, tokenAddress, 24);
-  if (prices.length < 15) return null;
-  return calcRSI(prices.map((p) => p.price), 14);
-}
-
-export async function batchFetchRSI(pools, maxConcurrent = 3) {
-  const rsiMap = new Map();
-  const exotic = {};
-  const seen = new Set();
-  for (const p of pools) {
-    const token = getExoticToken(p);
-    if (!token?.address) continue;
-    const key = `${p.chainId}-${token.address}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    exotic[p.id] = { chainId: p.chainId, address: token.address, key };
-  }
-  const entries = Object.entries(exotic);
-  let i = 0;
-  async function processNext() {
-    while (i < entries.length) {
-      const [poolId, info] = entries[i++];
-      try {
-        const rsi = await fetchRSI(info.chainId, info.address);
-        if (rsi !== null) rsiMap.set(poolId, rsi);
-      } catch { /* skip */ }
-      await new Promise((r) => setTimeout(r, 200));
-    }
-  }
-  const workers = Array.from({ length: Math.min(maxConcurrent, entries.length) }, () => processNext());
-  await Promise.all(workers);
-  return rsiMap;
-}

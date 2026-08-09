@@ -25,13 +25,6 @@ function ratioColor(ratio) {
   return 'negative';
 }
 
-function rsiColor(rsi) {
-  if (rsi == null) return '';
-  if (rsi >= 70) return 'rsi-high';
-  if (rsi <= 30) return 'rsi-low';
-  return 'rsi-mid';
-}
-
 function CopyAddr({ address, label }) {
   const [copied, setCopied] = useState(false);
   const handleCopy = (e) => {
@@ -53,7 +46,7 @@ function CopyAddr({ address, label }) {
 
 // ── VFat cell renderer ──
 
-function renderVfatCell(pool, key, rsiData) {
+function renderVfatCell(pool, key) {
   const chainName = CHAINS[pool.chainId]?.name || `Chain ${pool.chainId}`;
   switch (key) {
     case 'expand': return null;
@@ -72,6 +65,7 @@ function renderVfatCell(pool, key, rsiData) {
       return (
         <td className={`score ${pool.score >= 200 ? 'positive' : pool.score >= 50 ? 'apr-mid' : 'score'}`}>
           <strong>{pool.score}</strong>
+          {pool._risk && <div className="apr-detail">confidence {pool._risk.confidence}%{pool._risk.provisional ? ' · provisional' : ''}</div>}
         </td>
       );
     case 'protocol': return <td className="protocol">{pool.protocol}</td>;
@@ -98,10 +92,6 @@ function renderVfatCell(pool, key, rsiData) {
       );
     case 'inRangeRatio':
       return <td className={ratioColor(pool.inRangeRatio)}>{pool.inRangeRatio}%</td>;
-    case 'rsi': {
-      const rsi = rsiData?.get(pool.id);
-      return <td className={`rsi ${rsiColor(rsi)}`}>{rsi != null ? rsi : '-'}</td>;
-    }
     default: return <td>{pool[key] != null ? pool[key] : '-'}</td>;
   }
 }
@@ -123,6 +113,7 @@ function renderRaydiumCell(pool, key) {
       return (
         <td className={`score ${pool.score >= 200 ? 'positive' : pool.score >= 50 ? 'apr-mid' : 'score'}`}>
           <strong>{pool.score}</strong>
+          {pool._risk && <div className="apr-detail">confidence {pool._risk.confidence}%{pool._risk.provisional ? ' · provisional' : ''}</div>}
         </td>
       );
     case 'protocol': return <td className="protocol">{pool.protocol}</td>;
@@ -166,6 +157,7 @@ function renderTurbosCell(pool, key) {
       return (
         <td className={`score ${pool.score >= 200 ? 'positive' : pool.score >= 50 ? 'apr-mid' : 'score'}`}>
           <strong>{pool.score}</strong>
+          {pool._risk && <div className="apr-detail">confidence {pool._risk.confidence}%{pool._risk.provisional ? ' · provisional' : ''}</div>}
         </td>
       );
     case 'protocol': return <td className="protocol">{pool.protocol}</td>;
@@ -197,6 +189,8 @@ function renderTurbosCell(pool, key) {
 // ── Column definitions ──
 
 export const VFAT_COLUMNS = [
+  { key: 'favorite', label: '★', sortable: false },
+  { key: 'compare', label: 'Compare', sortable: false },
   { key: 'expand', label: '', sortable: false },
   { key: 'vfname', label: 'Pool', sortable: true },
   { key: 'protocol', label: 'Protocol', sortable: true },
@@ -204,14 +198,15 @@ export const VFAT_COLUMNS = [
   { key: 'apr', label: 'APR %', sortable: true },
   { key: 'maxApr', label: 'Max APR', sortable: true },
   { key: 'tvl', label: 'TVL', sortable: true },
-  { key: 'rangePct', label: 'Range %', sortable: true },
+  { key: 'rangePct', label: 'Tick interval %', sortable: true },
   { key: 'tickSpacing', label: 'Tick', sortable: true },
   { key: 'rewardsWeek', label: 'Rewards/wk', sortable: true },
   { key: 'inRangeRatio', label: 'In-Range %', sortable: true },
-  { key: 'rsi', label: 'RSI', sortable: true },
 ];
 
 export const RAYDIUM_COLUMNS = [
+  { key: 'favorite', label: '★', sortable: false },
+  { key: 'compare', label: 'Compare', sortable: false },
   { key: 'expand', label: '', sortable: false },
   { key: 'pair', label: 'Pool', sortable: true },
   { key: 'score', label: 'Score', sortable: true },
@@ -219,12 +214,14 @@ export const RAYDIUM_COLUMNS = [
   { key: 'rewardApr', label: 'Reward APR', sortable: true },
   { key: 'tvl', label: 'TVL', sortable: true },
   { key: 'volume7d', label: 'Vol 7d', sortable: true },
-  { key: 'rangePct', label: 'Range %', sortable: true },
+  { key: 'rangePct', label: 'Tick interval %', sortable: true },
   { key: 'feePct', label: 'Fee %', sortable: true },
   { key: 'tickSpacing', label: 'Tick', sortable: true },
 ];
 
 export const TURBOS_COLUMNS = [
+  { key: 'favorite', label: '★', sortable: false },
+  { key: 'compare', label: 'Compare', sortable: false },
   { key: 'expand', label: '', sortable: false },
   { key: 'pair', label: 'Pool', sortable: true },
   { key: 'score', label: 'Score', sortable: true },
@@ -233,7 +230,7 @@ export const TURBOS_COLUMNS = [
   { key: 'apr7d', label: 'APR 7d', sortable: true },
   { key: 'tvl', label: 'TVL', sortable: true },
   { key: 'volume24h', label: 'Vol 24h', sortable: true },
-  { key: 'rangePct', label: 'Range %', sortable: true },
+  { key: 'rangePct', label: 'Tick interval %', sortable: true },
   { key: 'feePct', label: 'Fee %', sortable: true },
   { key: 'tickSpacing', label: 'Tick', sortable: true },
 ];
@@ -251,7 +248,7 @@ const RENDERERS = {
 // React NEVER adds/removes <tr> elements - only changes CSS and conditional children.
 // This eliminates ALL DOM reconciliation issues.
 
-export default function PoolTable({ pools, columns, rsiData, source = 'vfat', onSort, sortKey, sortDir }) {
+export default function PoolTable({ pools, columns, source = 'vfat', onSort, sortKey, sortDir, favoriteIds = new Set(), compareIds = [], onFavorite, onCompare }) {
   const [expandedId, setExpandedId] = useState(null);
 
   // Reset expand on tab/source change or pool list change
@@ -281,6 +278,7 @@ export default function PoolTable({ pools, columns, rsiData, source = 'vfat', on
                     : ''
                 }
                 onClick={() => col.sortable && onSort && onSort(col.key)}
+                aria-sort={col.sortable && sortKey === col.key ? (sortDir === 'desc' ? 'descending' : 'ascending') : undefined}
               >
                 {col.label}
               </th>
@@ -295,15 +293,22 @@ export default function PoolTable({ pools, columns, rsiData, source = 'vfat', on
                 <tr
                   className={`pool-row${isExpanded ? ' expanded' : ''}`}
                   onClick={() => toggleExpand(pool.id)}
+                  tabIndex={showChart ? 0 : undefined}
+                  onKeyDown={(e) => { if (showChart && (e.key === 'Enter' || e.key === ' ')) toggleExpand(pool.id); }}
+                  aria-expanded={showChart ? isExpanded : undefined}
                 >
                   {columns.map((col) => (
-                    col.key === 'expand' ? (
+                    col.key === 'favorite' ? (
+                      <td key={col.key}><button className="icon-action" aria-label={favoriteIds.has(pool.id) ? 'Remove favorite' : 'Add favorite'} onClick={(e) => { e.stopPropagation(); onFavorite?.(pool.id); }}>{favoriteIds.has(pool.id) ? '★' : '☆'}</button></td>
+                    ) : col.key === 'compare' ? (
+                      <td key={col.key}><input aria-label={`Compare ${pool.pair}`} type="checkbox" checked={compareIds.includes(pool.id)} onClick={(e) => e.stopPropagation()} onChange={() => onCompare?.(pool.id)} /></td>
+                    ) : col.key === 'expand' ? (
                       <td key={col.key} className="expand-cell">
                         <span className={`expand-arrow${isExpanded ? ' open' : ''}`}>▶</span>
                       </td>
                     ) : (
                       <Fragment key={col.key}>
-                        {renderCell(pool, col.key, rsiData)}
+                        {renderCell(pool, col.key)}
                       </Fragment>
                     )
                   ))}

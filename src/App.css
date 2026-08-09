@@ -577,25 +577,6 @@ body {
   font-size: 13px;
 }
 
-/* RSI colors */
-.rsi {
-  font-family: 'SF Mono', 'Consolas', monospace;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.rsi-high {
-  color: var(--green);
-}
-
-.rsi-mid {
-  color: var(--orange);
-}
-
-.rsi-low {
-  color: var(--red);
-}
-
 /* Rewards detail */
 .fees-only-label {
   font-size: 10px;
@@ -802,6 +783,45 @@ body {
     flex-direction: column;
     gap: 8px;
   }
+}
+
+.icon-action {
+  border: 0;
+  background: transparent;
+  color: #f2cc60;
+  cursor: pointer;
+  font-size: 1.15rem;
+  padding: 0.25rem;
+}
+
+.icon-action:focus-visible,
+.pool-row:focus-visible {
+  outline: 2px solid #58a6ff;
+  outline-offset: -2px;
+}
+
+.watchlist-view,
+.compare-view {
+  margin-top: 1rem;
+}
+
+.compare-table th small {
+  display: block;
+  color: #8b949e;
+  margin-top: 0.25rem;
+}
+
+.risk-details {
+  margin-top: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+}
+
+.risk-details span {
+  display: inline-block;
+  margin: 0.5rem 1rem 0 0;
+  text-transform: capitalize;
 }
 
 /* ── Pool Analysis ── */

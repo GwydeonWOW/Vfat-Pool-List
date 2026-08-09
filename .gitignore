@@ -5,3 +5,4 @@ data
 *.local
 .env
 .env.*
+!.env.example
