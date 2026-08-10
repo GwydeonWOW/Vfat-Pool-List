@@ -106,6 +106,7 @@ export default function App() {
   const [maxRange, setMaxRange] = useState(10);
   const [minRewardsWeek, setMinRewardsWeek] = useState(0);
   const [minNetDaily, setMinNetDaily] = useState(30);
+  const [yieldSource, setYieldSource] = useState('all');
   const [showFilters, setShowFilters] = useState(false);
 
   // Fetch last refresh time from backend
@@ -226,6 +227,13 @@ export default function App() {
     if (p.apr < effectiveMinApr) return false;
     if (p.rangePct < minRange || p.rangePct > maxRange) return false;
     if (activeTab === 'vfat' && p.rewardsWeek < minRewardsWeek) return false;
+    if (activeTab === 'vfat' && yieldSource !== 'all') {
+      const hasFees = Number(p.feesWeek) > 0;
+      const hasIncentives = Number(p.realRewardsWeek) > 0;
+      if (yieldSource === 'fees_only' && (!hasFees || hasIncentives)) return false;
+      if (yieldSource === 'rewards_only' && (!hasIncentives || hasFees)) return false;
+      if (yieldSource === 'both' && (!hasFees || !hasIncentives)) return false;
+    }
     return true;
   });
 
@@ -389,6 +397,17 @@ export default function App() {
               <label>
                 Min APR: %
                 <input type="number" value={minApr} onChange={(e) => { setMinApr(Number(e.target.value)); setPage(1); }} />
+              </label>
+            )}
+            {activeTab === 'vfat' && (
+              <label>
+                Yield source:
+                <select value={yieldSource} onChange={(e) => { setYieldSource(e.target.value); setPage(1); }}>
+                  <option value="all">All pools</option>
+                  <option value="fees_only">Fees only</option>
+                  <option value="rewards_only">Weekly rewards only</option>
+                  <option value="both">Fees + weekly rewards</option>
+                </select>
               </label>
             )}
             <label>

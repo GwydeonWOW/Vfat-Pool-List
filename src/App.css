@@ -215,9 +215,19 @@ body {
   width: 100px;
 }
 
-.filter-row input[type="number"]:focus {
+.filter-row input[type="number"]:focus,
+.filter-row select:focus {
   outline: none;
   border-color: var(--blue);
+}
+
+.filter-row select {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 13px;
 }
 
 /* Search bar */
