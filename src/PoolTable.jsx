@@ -70,6 +70,8 @@ function renderVfatCell(pool, key) {
       );
     case 'estimatedNetDaily': return <td className={pool.estimatedNetDaily >= 30 ? 'positive' : 'negative'}><strong>{formatUsd(pool.estimatedNetDaily || 0)}</strong><div className="apr-detail">$400 position</div></td>;
     case 'poolRewardsDaily': return <td>{pool.poolRewardsDaily != null ? formatUsd(pool.poolRewardsDaily) : '-'}</td>;
+    case 'poolFeesDaily': return <td>{formatUsd(pool.poolFeesDaily || 0)}</td>;
+    case 'poolIncentivesDaily': return <td className={pool.poolIncentivesDaily > 0 ? 'positive' : ''}>{formatUsd(pool.poolIncentivesDaily || 0)}{pool._risk?.incentiveDependent && <div className="apr-detail">incentives only</div>}</td>;
     case 'estimatedExitsPerDay': return <td>{pool.estimatedExitsPerDay != null ? `${pool.estimatedExitsPerDay}/day` : '-'}</td>;
     case 'protocol': return <td className="protocol">{pool.protocol}</td>;
     case 'apr':
@@ -201,7 +203,8 @@ export const VFAT_COLUMNS = [
   { key: 'protocol', label: 'Protocol', sortable: true },
   { key: 'score', label: 'Score', sortable: true },
   { key: 'estimatedNetDaily', label: 'Net/day', sortable: true },
-  { key: 'poolRewardsDaily', label: 'Pool rewards/day', sortable: true },
+  { key: 'poolFeesDaily', label: 'Pool fees/day', sortable: true },
+  { key: 'poolIncentivesDaily', label: 'Incentives/day', sortable: true },
   { key: 'estimatedExitsPerDay', label: 'Est. exits/day', sortable: true },
   { key: 'apr', label: 'APR %', sortable: true },
   { key: 'maxApr', label: 'Max APR', sortable: true },

@@ -19,12 +19,22 @@ describe('risk score', () => {
   });
 
   it('never promotes a pool capped below the $30 daily target', () => {
-    const lowCapacity = calculateRiskScores({ chainId: 8453, tvl: 50000, apr: 6000, maxApr: 6000, rewardsWeek: 175, rangePct: 2, inRangeRatio: 80 }, []).balanced;
-    const profitable = calculateRiskScores({ chainId: 56, tvl: 50000, apr: 5000, maxApr: 5000, rewardsWeek: 1050, rangePct: 2, inRangeRatio: 35 }, []).balanced;
+    const lowCapacity = calculateRiskScores({ chainId: 8453, tvl: 50000, apr: 6000, maxApr: 6000, rewardsWeek: 175, inRangeLiquidity: 100, rangePct: 2, inRangeRatio: 80 }, []).balanced;
+    const profitable = calculateRiskScores({ chainId: 56, tvl: 50000, apr: 5000, maxApr: 5000, rewardsWeek: 1440, inRangeLiquidity: 588, rangePct: 2, inRangeRatio: 35 }, []).balanced;
     expect(lowCapacity.poolRewardsDaily).toBe(25);
     expect(lowCapacity.meetsTarget).toBe(false);
     expect(lowCapacity.total).toBeLessThan(50);
     expect(profitable.estimatedNetDaily).toBeGreaterThan(30);
     expect(profitable.total).toBeGreaterThan(lowCapacity.total);
+  });
+
+  it('limits max APR by the position share of rewarded liquidity', () => {
+    const result = calculateRiskScores({ chainId: 8453, type: 'AERO_SLIPSTREAM_GAUGE', tvl: 27214, apr: 232.5, maxApr: 8937, rewardsWeek: 1005, realRewardsWeek: 1005, feesWeek: 0, rewardedLiquidity: 586, rangePct: 2, inRangeRatio: 2.2 }, []).balanced;
+    expect(result.estimatedPositionShare).toBeCloseTo(40.57, 1);
+    expect(result.estimatedGrossDaily).toBeLessThan(50);
+    expect(result.estimatedGrossDaily).toBeGreaterThan(0);
+    expect(result.poolFeesDaily).toBe(0);
+    expect(result.poolIncentivesDaily).toBeGreaterThan(140);
+    expect(result.incentiveDependent).toBe(true);
   });
 });

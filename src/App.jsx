@@ -238,6 +238,8 @@ export default function App() {
       score: opportunity?.total ?? calcFn(p),
       estimatedNetDaily: opportunity?.estimatedNetDaily,
       poolRewardsDaily: opportunity?.poolRewardsDaily,
+      poolIncentivesDaily: opportunity?.poolIncentivesDaily,
+      poolFeesDaily: opportunity?.poolFeesDaily,
       estimatedExitsPerDay: opportunity?.estimatedExitsPerDay,
     };
   });
