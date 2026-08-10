@@ -114,6 +114,7 @@ const VFAT_CL_TYPES = [
   'AERO_SLIPSTREAM_GAUGE', 'PANCAKE_SWAP_V3', 'UNISWAP_V3',
   'UNISWAP_V4', 'THENA_V3', 'BMX_V4_FARM',
 ];
+const MAJOR_TOKEN_SYMBOLS = new Set(['WETH','ETH','USDC','USDT','WBTC','CBBTC','TBTC','BTCB','WBNB','BNB','DAI','USD1']);
 
 async function fetchVFatChain(chainId) {
   const farms = await fetchJSON(`${VFAT_BASE}?chainId=${chainId}`);
@@ -133,6 +134,8 @@ async function fetchVFatChain(chainId) {
     const inRangeRatio = poolLiq > 0 ? (inRangeLiq / poolLiq * 100) : 0;
     const underlying = pool.underlying || [];
     const symbols = underlying.map((u) => u.symbol || '');
+    const pricedToken = underlying.find(u => !MAJOR_TOKEN_SYMBOLS.has(String(u.symbol || '').toUpperCase()) && Number(u.price) > 0)
+      || underlying.find(u => Number(u.price) > 0);
     const rewardsWeek = snap.rewardsPerWeek || 0;
 
     // Real rewards calc
@@ -172,6 +175,7 @@ async function fetchVFatChain(chainId) {
       currentTick: pool.tick || null,
       sqrtPrice: pool.sqrtPrice || null,
       fee: pool.fee, currentFee: pool.currentFee,
+      price: Number(pricedToken?.price || 0),
       apr: parseFloat(apr.toFixed(2)),
       stakingApr: parseFloat((snap.stakingApr || 0).toFixed(2)),
       lpApr: parseFloat((snap.lpApr || 0).toFixed(2)),

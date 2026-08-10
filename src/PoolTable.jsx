@@ -63,11 +63,14 @@ function renderVfatCell(pool, key) {
       );
     case 'score':
       return (
-        <td className={`score ${pool.score >= 200 ? 'positive' : pool.score >= 50 ? 'apr-mid' : 'score'}`}>
+        <td className={`score ${pool.score >= 70 ? 'positive' : pool.score >= 50 ? 'apr-mid' : 'negative'}`}>
           <strong>{pool.score}</strong>
-          {pool._risk && <div className="apr-detail">confidence {pool._risk.confidence}%{pool._risk.provisional ? ' · provisional' : ''}</div>}
+          {pool._risk && <div className="apr-detail">net {formatUsd(pool._risk.estimatedNetDaily)}/day{pool._risk.provisional ? ' · provisional' : ''}</div>}
         </td>
       );
+    case 'estimatedNetDaily': return <td className={pool.estimatedNetDaily >= 30 ? 'positive' : 'negative'}><strong>{formatUsd(pool.estimatedNetDaily || 0)}</strong><div className="apr-detail">$400 position</div></td>;
+    case 'poolRewardsDaily': return <td>{pool.poolRewardsDaily != null ? formatUsd(pool.poolRewardsDaily) : '-'}</td>;
+    case 'estimatedExitsPerDay': return <td>{pool.estimatedExitsPerDay != null ? `${pool.estimatedExitsPerDay}/day` : '-'}</td>;
     case 'protocol': return <td className="protocol">{pool.protocol}</td>;
     case 'apr':
       return (
@@ -111,11 +114,12 @@ function renderRaydiumCell(pool, key) {
       );
     case 'score':
       return (
-        <td className={`score ${pool.score >= 200 ? 'positive' : pool.score >= 50 ? 'apr-mid' : 'score'}`}>
+        <td className={`score ${pool.score >= 70 ? 'positive' : pool.score >= 50 ? 'apr-mid' : 'negative'}`}>
           <strong>{pool.score}</strong>
-          {pool._risk && <div className="apr-detail">confidence {pool._risk.confidence}%{pool._risk.provisional ? ' · provisional' : ''}</div>}
+          {pool._risk && <div className="apr-detail">net {formatUsd(pool._risk.estimatedNetDaily)}/day{pool._risk.provisional ? ' · provisional' : ''}</div>}
         </td>
       );
+    case 'estimatedNetDaily': return <td className={pool.estimatedNetDaily >= 30 ? 'positive' : 'negative'}><strong>{formatUsd(pool.estimatedNetDaily || 0)}</strong></td>;
     case 'protocol': return <td className="protocol">{pool.protocol}</td>;
     case 'apr':
       return (
@@ -155,11 +159,12 @@ function renderTurbosCell(pool, key) {
       );
     case 'score':
       return (
-        <td className={`score ${pool.score >= 200 ? 'positive' : pool.score >= 50 ? 'apr-mid' : 'score'}`}>
+        <td className={`score ${pool.score >= 70 ? 'positive' : pool.score >= 50 ? 'apr-mid' : 'negative'}`}>
           <strong>{pool.score}</strong>
-          {pool._risk && <div className="apr-detail">confidence {pool._risk.confidence}%{pool._risk.provisional ? ' · provisional' : ''}</div>}
+          {pool._risk && <div className="apr-detail">net {formatUsd(pool._risk.estimatedNetDaily)}/day{pool._risk.provisional ? ' · provisional' : ''}</div>}
         </td>
       );
+    case 'estimatedNetDaily': return <td className={pool.estimatedNetDaily >= 30 ? 'positive' : 'negative'}><strong>{formatUsd(pool.estimatedNetDaily || 0)}</strong></td>;
     case 'protocol': return <td className="protocol">{pool.protocol}</td>;
     case 'apr':
       return (
@@ -195,6 +200,9 @@ export const VFAT_COLUMNS = [
   { key: 'vfname', label: 'Pool', sortable: true },
   { key: 'protocol', label: 'Protocol', sortable: true },
   { key: 'score', label: 'Score', sortable: true },
+  { key: 'estimatedNetDaily', label: 'Net/day', sortable: true },
+  { key: 'poolRewardsDaily', label: 'Pool rewards/day', sortable: true },
+  { key: 'estimatedExitsPerDay', label: 'Est. exits/day', sortable: true },
   { key: 'apr', label: 'APR %', sortable: true },
   { key: 'maxApr', label: 'Max APR', sortable: true },
   { key: 'tvl', label: 'TVL', sortable: true },
@@ -210,6 +218,7 @@ export const RAYDIUM_COLUMNS = [
   { key: 'expand', label: '', sortable: false },
   { key: 'pair', label: 'Pool', sortable: true },
   { key: 'score', label: 'Score', sortable: true },
+  { key: 'estimatedNetDaily', label: 'Net/day', sortable: true },
   { key: 'apr', label: 'APR %', sortable: true },
   { key: 'rewardApr', label: 'Reward APR', sortable: true },
   { key: 'tvl', label: 'TVL', sortable: true },
@@ -225,6 +234,7 @@ export const TURBOS_COLUMNS = [
   { key: 'expand', label: '', sortable: false },
   { key: 'pair', label: 'Pool', sortable: true },
   { key: 'score', label: 'Score', sortable: true },
+  { key: 'estimatedNetDaily', label: 'Net/day', sortable: true },
   { key: 'apr', label: 'APR %', sortable: true },
   { key: 'rewardApr', label: 'Reward APR', sortable: true },
   { key: 'apr7d', label: 'APR 7d', sortable: true },

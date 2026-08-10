@@ -104,7 +104,8 @@ export default function App() {
   const [minApr, setMinApr] = useState(100);
   const [minRange, setMinRange] = useState(0.5);
   const [maxRange, setMaxRange] = useState(10);
-  const [minRewardsWeek, setMinRewardsWeek] = useState(1000);
+  const [minRewardsWeek, setMinRewardsWeek] = useState(0);
+  const [minNetDaily, setMinNetDaily] = useState(30);
   const [showFilters, setShowFilters] = useState(false);
 
   // Fetch last refresh time from backend
@@ -229,8 +230,19 @@ export default function App() {
   });
 
   const calcFn = SCORERS[activeTab] || calcGenericScore;
-  const scored = afterFilters.map((p) => ({ ...p, _risk: p.riskScores?.[riskProfile], score: p.riskScores?.[riskProfile]?.total ?? calcFn(p) }));
-  const sorted = [...scored].sort((a, b) => {
+  const scored = afterFilters.map((p) => {
+    const opportunity = p.riskScores?.[riskProfile];
+    return {
+      ...p,
+      _risk: opportunity,
+      score: opportunity?.total ?? calcFn(p),
+      estimatedNetDaily: opportunity?.estimatedNetDaily,
+      poolRewardsDaily: opportunity?.poolRewardsDaily,
+      estimatedExitsPerDay: opportunity?.estimatedExitsPerDay,
+    };
+  });
+  const afterProfitTarget = scored.filter(p => (p.estimatedNetDaily ?? 0) >= minNetDaily);
+  const sorted = [...afterProfitTarget].sort((a, b) => {
     const aVal = a[sortKey] ?? 0;
     const bVal = b[sortKey] ?? 0;
     if (typeof aVal === 'string') {
@@ -290,8 +302,8 @@ export default function App() {
               Data: {refreshAgo < 60 ? `${refreshAgo}s` : `${Math.floor(refreshAgo/60)}m`} ago
             </span>
           )}
-          <select aria-label="Risk profile" value={riskProfile} onChange={e => { setRiskProfile(e.target.value); localStorage.setItem('risk_profile', e.target.value); }} className="chain-select">
-            <option value="conservative">Conservative</option><option value="balanced">Balanced</option><option value="aggressive">Aggressive</option>
+          <select aria-label="Estimation scenario" value={riskProfile} onChange={e => { setRiskProfile(e.target.value); localStorage.setItem('risk_profile', e.target.value); }} className="chain-select">
+            <option value="conservative">Conservative estimate</option><option value="balanced">Balanced estimate</option><option value="aggressive">Aggressive estimate</option>
           </select>
           <button onClick={handleRefresh} disabled={loading || refreshing || ['analysis','watchlist','compare'].includes(activeTab)} className="refresh-btn">
             {refreshing ? 'Refreshing...' : loading ? 'Loading...' : 'Refresh'}
@@ -377,6 +389,10 @@ export default function App() {
                 <input type="number" value={minApr} onChange={(e) => { setMinApr(Number(e.target.value)); setPage(1); }} />
               </label>
             )}
+            <label>
+              Min estimated net/day: $
+              <input type="number" min="0" step="1" value={minNetDaily} onChange={(e) => { setMinNetDaily(Number(e.target.value)); setPage(1); }} />
+            </label>
           </div>
           <div className="filter-row">
             <label>

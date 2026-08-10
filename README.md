@@ -3,6 +3,12 @@
 Panel privado para filtrar y comparar pools de liquidez concentrada de VFat,
 Raydium, Turbos, Uniswap, Orca y Cetus.
 
+El score de oportunidad simula una posición de 400 USD y prioriza un beneficio
+neto mínimo de 30 USD diarios. Parte del APR potencial, limita el ingreso por los
+rewards diarios totales del pool y descuenta realización imperfecta, tiempo fuera
+de rango, slippage y costes de rebalanceo. Los escenarios conservador,
+equilibrado y agresivo cambian esos descuentos, no el capital simulado.
+
 ## Desarrollo
 
 ```powershell
