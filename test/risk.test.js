@@ -36,16 +36,6 @@ describe('risk score', () => {
     expect(high.total).toBeGreaterThan(atTarget.total);
   });
 
-  it('prioritizes CL-named farms without promoting an unprofitable pool above 100', () => {
-    const base = { chainId: 8453, tvl: 50000, maxApr: 9000, rewardsWeek: 1500, inRangeLiquidity: 500, rangePct: 2, inRangeRatio: 50 };
-    const regular = calculateRiskScores({ ...base, vfname: 'WETH/TOKEN' }, []).balanced;
-    const concentrated = calculateRiskScores({ ...base, vfname: 'CL200-WETH/TOKEN' }, []).balanced;
-    expect(concentrated.concentratedFarmBonus).toBe(12);
-    expect(concentrated.total).toBeGreaterThan(regular.total);
-
-    const weak = calculateRiskScores({ ...base, vfname: 'CL200-WETH/TOKEN', maxApr: 100, rewardsWeek: 10 }, []).balanced;
-    expect(weak.total).toBeLessThan(100);
-  });
 
   it('limits max APR by the position share of rewarded liquidity', () => {
     const result = calculateRiskScores({ chainId: 8453, type: 'AERO_SLIPSTREAM_GAUGE', tvl: 27214, apr: 232.5, maxApr: 8937, rewardsWeek: 1005, realRewardsWeek: 1005, feesWeek: 0, rewardedLiquidity: 586, rangePct: 2, inRangeRatio: 2.2 }, []).balanced;

@@ -12,7 +12,6 @@ const rows = [
   ['Competing in-range liquidity', p => p._risk ? formatUsd(p._risk.competitionLiquidity) : '-'],
   ['Estimated exits/day', p => p._risk?.estimatedExitsPerDay ?? '-'], ['Rebalance cost/day', p => p._risk ? formatUsd(p._risk.rebalanceCostDaily) : '-'],
   ['Meets $30/day', p => p._risk?.meetsTarget ? 'Yes' : 'No'], ['Confidence', p => p._risk ? `${p._risk.confidence}%` : '-'],
-  ['Concentrated farm bonus', p => p._risk?.isConcentratedFarm ? `+${p._risk.concentratedFarmBonus}` : '-'],
   ['APR', p => `${p.apr || 0}%`], ['Fee APR', p => `${p.feeApr || 0}%`], ['Reward APR', p => `${p.rewardApr || 0}%`],
   ['TVL', p => formatUsd(p.tvl)], ['Volume 24h', p => formatUsd(p.volume24h)],
   ['Volume/TVL', p => p.tvl ? (p.volume24h / p.tvl).toFixed(2) : '-'], ['Fee', p => `${p.feePct || 0}%`],
