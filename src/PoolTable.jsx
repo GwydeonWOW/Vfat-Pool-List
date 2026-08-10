@@ -63,9 +63,9 @@ function renderVfatCell(pool, key) {
       );
     case 'score':
       return (
-        <td className={`score ${pool.score >= 70 ? 'positive' : pool.score >= 50 ? 'apr-mid' : 'negative'}`}>
+        <td className={`score ${pool.score >= 100 ? 'positive' : pool.score >= 70 ? 'apr-mid' : 'negative'}`}>
           <strong>{pool.score}</strong>
-          {pool._risk && <div className="apr-detail">net {formatUsd(pool._risk.estimatedNetDaily)}/day{pool._risk.provisional ? ' · provisional' : ''}</div>}
+          {pool._risk && <div className="apr-detail">net {formatUsd(pool._risk.estimatedNetDaily)}/day{pool._risk.isConcentratedFarm ? ` · CL +${pool._risk.concentratedFarmBonus}` : ''}{pool._risk.provisional ? ' · provisional' : ''}</div>}
         </td>
       );
     case 'estimatedNetDaily': return <td className={pool.estimatedNetDaily >= 30 ? 'positive' : 'negative'}><strong>{formatUsd(pool.estimatedNetDaily || 0)}</strong><div className="apr-detail">$400 position</div></td>;
@@ -116,7 +116,7 @@ function renderRaydiumCell(pool, key) {
       );
     case 'score':
       return (
-        <td className={`score ${pool.score >= 70 ? 'positive' : pool.score >= 50 ? 'apr-mid' : 'negative'}`}>
+        <td className={`score ${pool.score >= 100 ? 'positive' : pool.score >= 70 ? 'apr-mid' : 'negative'}`}>
           <strong>{pool.score}</strong>
           {pool._risk && <div className="apr-detail">net {formatUsd(pool._risk.estimatedNetDaily)}/day{pool._risk.provisional ? ' · provisional' : ''}</div>}
         </td>
@@ -161,7 +161,7 @@ function renderTurbosCell(pool, key) {
       );
     case 'score':
       return (
-        <td className={`score ${pool.score >= 70 ? 'positive' : pool.score >= 50 ? 'apr-mid' : 'negative'}`}>
+        <td className={`score ${pool.score >= 100 ? 'positive' : pool.score >= 70 ? 'apr-mid' : 'negative'}`}>
           <strong>{pool.score}</strong>
           {pool._risk && <div className="apr-detail">net {formatUsd(pool._risk.estimatedNetDaily)}/day{pool._risk.provisional ? ' · provisional' : ''}</div>}
         </td>

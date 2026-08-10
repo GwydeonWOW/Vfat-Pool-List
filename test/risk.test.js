@@ -9,8 +9,7 @@ describe('risk score', () => {
     expect(Object.keys(result)).toEqual(Object.keys(PROFILE_ASSUMPTIONS));
     for (const score of Object.values(result)) {
       expect(score.total).toBeGreaterThanOrEqual(0);
-      expect(score.total).toBeLessThanOrEqual(100);
-      expect(score.version).toBe('2.0');
+      expect(score.version).toBe('2.1');
     }
   });
 
@@ -23,9 +22,29 @@ describe('risk score', () => {
     const profitable = calculateRiskScores({ chainId: 56, tvl: 50000, apr: 5000, maxApr: 5000, rewardsWeek: 1440, inRangeLiquidity: 588, rangePct: 2, inRangeRatio: 35 }, []).balanced;
     expect(lowCapacity.poolRewardsDaily).toBe(25);
     expect(lowCapacity.meetsTarget).toBe(false);
-    expect(lowCapacity.total).toBeLessThan(50);
+    expect(lowCapacity.total).toBeLessThan(100);
     expect(profitable.estimatedNetDaily).toBeGreaterThan(30);
+    expect(profitable.total).toBeGreaterThan(100);
     expect(profitable.total).toBeGreaterThan(lowCapacity.total);
+  });
+
+  it('uses an open scale to distinguish pools above the target', () => {
+    const base = { chainId: 56, tvl: 50000, maxApr: 20000, rewardsWeek: 10000, inRangeLiquidity: 100, rangePct: 2, inRangeRatio: 50 };
+    const atTarget = calculateRiskScores({ ...base, maxApr: 4000 }, []).aggressive;
+    const high = calculateRiskScores(base, []).aggressive;
+    expect(high.total).toBeGreaterThan(100);
+    expect(high.total).toBeGreaterThan(atTarget.total);
+  });
+
+  it('prioritizes CL-named farms without promoting an unprofitable pool above 100', () => {
+    const base = { chainId: 8453, tvl: 50000, maxApr: 9000, rewardsWeek: 1500, inRangeLiquidity: 500, rangePct: 2, inRangeRatio: 50 };
+    const regular = calculateRiskScores({ ...base, vfname: 'WETH/TOKEN' }, []).balanced;
+    const concentrated = calculateRiskScores({ ...base, vfname: 'CL200-WETH/TOKEN' }, []).balanced;
+    expect(concentrated.concentratedFarmBonus).toBe(12);
+    expect(concentrated.total).toBeGreaterThan(regular.total);
+
+    const weak = calculateRiskScores({ ...base, vfname: 'CL200-WETH/TOKEN', maxApr: 100, rewardsWeek: 10 }, []).balanced;
+    expect(weak.total).toBeLessThan(100);
   });
 
   it('limits max APR by the position share of rewarded liquidity', () => {

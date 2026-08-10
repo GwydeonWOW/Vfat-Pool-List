@@ -8,6 +8,12 @@ neto mínimo de 30 USD diarios. Parte del APR potencial, limita el ingreso por l
 rewards diarios totales del pool y descuenta realización imperfecta, tiempo fuera
 de rango, slippage y costes de rebalanceo. Los escenarios conservador,
 equilibrado y agresivo cambian esos descuentos, no el capital simulado.
+La puntuación usa una escala abierta: 100 equivale al objetivo de 30 USD netos
+diarios, 150 aproximadamente al doble y 200 aproximadamente a cuatro veces el
+objetivo. Las pools por debajo del objetivo permanecen entre 0 y 99.
+Las farms VFat con nombre `CL<número>-...` reciben una bonificación de prioridad
+de 12 puntos si superan el objetivo y de 5 puntos si no lo alcanzan; una pool no
+rentable nunca puede superar 99 únicamente por esta bonificación.
 
 ## Desarrollo
 
