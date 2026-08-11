@@ -4,6 +4,7 @@ import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import cookieParser from 'cookie-parser';
+import compression from 'compression';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
@@ -16,6 +17,7 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Parse JSON bodies
+app.use(compression());
 app.use(express.json());
 app.use(cookieParser());
 app.use(helmet({ contentSecurityPolicy: { directives: {
@@ -621,16 +623,42 @@ app.use('/api', (req, res, next) => {
 
 // ── API routes ──
 
+const enrichedResponseCache = new Map();
+
 function enrichedCache(provider) {
   const cache = readCache(`${provider}.json`);
   if (!cache) {
     return { timestamp: null, pools: [], stale: true, status: provider === 'uniswap' && !process.env.UNISWAP_API_KEY ? 'disabled' : 'empty' };
   }
+  const memoized = enrichedResponseCache.get(provider);
+  if (memoized?.timestamp === cache.timestamp) return memoized.response;
+  // Raydium can exceed 5,000 pools. Fetching history once per pool blocks the
+  // Node event loop long enough for the reverse proxy to return 502 responses.
+  const raydiumHistory = provider === 'raydium'
+    ? store.historyMap(cache.pools.map((pool) => pool.id), Date.now() - 6.5 * 3600000)
+    : null;
   const pools = cache.pools.map(pool => {
-    const history = store.history(pool.id, Date.now() - 30 * 86400000);
-    return { ...pool, riskScores: calculateRiskScores(pool, history), tokenRisk: calculateTokenRisk(pool, history) };
+    const history = provider === 'raydium'
+      ? (raydiumHistory.get(pool.id) || [])
+      : store.history(pool.id, Date.now() - 30 * 86400000);
+    return { ...pool, riskScores: compactRiskScores(calculateRiskScores(pool, history)), tokenRisk: calculateTokenRisk(pool, history) };
   });
-  return { ...cache, pools, stale: Date.now() - cache.timestamp > 15 * 60 * 1000 };
+  const response = { ...cache, pools, stale: Date.now() - cache.timestamp > 15 * 60 * 1000 };
+  enrichedResponseCache.set(provider, { timestamp: cache.timestamp, response });
+  return response;
+}
+
+function compactRiskScores(scores) {
+  return Object.fromEntries(Object.entries(scores).map(([profile, score]) => [profile, {
+    total: score.total,
+    estimatedNetDaily: score.estimatedNetDaily,
+    poolRewardsDaily: score.poolRewardsDaily,
+    poolIncentivesDaily: score.poolIncentivesDaily,
+    poolFeesDaily: score.poolFeesDaily,
+    estimatedExitsPerDay: score.estimatedExitsPerDay,
+    incentiveDependent: score.incentiveDependent,
+    provisional: score.provisional,
+  }]));
 }
 
 for (const provider of Object.keys(PROVIDERS)) app.get(`/api/${provider}`, (req, res) => res.json(enrichedCache(provider)));

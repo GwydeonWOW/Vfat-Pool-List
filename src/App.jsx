@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { CHAINS, fetchAllPools, fetchRaydiumPools, fetchTurbosPools, fetchProviderPools, refreshBackend, fetchStatus, setOnAuthFail, fetchWatchlist, addWatchlist, removeWatchlist } from './api';
 import PoolTable, { VFAT_COLUMNS, RAYDIUM_COLUMNS, TURBOS_COLUMNS } from './PoolTable';
 import Login, { isAuthenticated, clearAuth } from './Auth';
@@ -99,6 +99,8 @@ export default function App() {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshAgo, setRefreshAgo] = useState(null);
+  const [cacheTimestamp, setCacheTimestamp] = useState(null);
+  const loadedCacheTimestamps = useRef({});
 
   // Pagination
   const [page, setPage] = useState(1);
@@ -138,6 +140,7 @@ export default function App() {
       const status = await fetchStatus();
       const source = status[activeTab];
       setRefreshAgo(source ? source.age : null);
+      setCacheTimestamp(source?.timestamp || null);
     } catch { /* ignore */ }
   }, [activeTab]);
 
@@ -201,13 +204,16 @@ export default function App() {
     loadData(activeTab);
   }, [activeTab, loadData]);
 
-  // The backend refreshes providers in the background. Keep the visible table
-  // synchronized with that cache without blanking it or requiring a page reload.
+  // Reload only when the backend cache version changes. Raydium can contain
+  // thousands of pools, so polling the full payload every 30 seconds is wasteful.
   useEffect(() => {
     if (['analysis', 'watchlist', 'compare'].includes(activeTab)) return undefined;
-    const interval = setInterval(() => loadData(activeTab, true), 30000);
-    return () => clearInterval(interval);
-  }, [activeTab, loadData]);
+    if (!cacheTimestamp) return undefined;
+    const previous = loadedCacheTimestamps.current[activeTab];
+    loadedCacheTimestamps.current[activeTab] = cacheTimestamp;
+    if (!previous || previous !== cacheTimestamp) loadData(activeTab, true);
+    return undefined;
+  }, [activeTab, cacheTimestamp, loadData]);
 
   const loadFavorites = useCallback(async () => {
     try { const data = await fetchWatchlist(); setFavoriteIds(new Set((data.items || []).map(x => x.pool_id))); } catch {}

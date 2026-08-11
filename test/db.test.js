@@ -27,4 +27,16 @@ describe('SQLite store', () => {
     expect(store.readProvider('cetus')).toMatchObject({ pools: [], status: 'degraded', error: '404 Not Found' });
     db.close();
   });
+
+  it('loads histories for many pools in one grouped operation', () => {
+    folder = mkdtempSync(join(tmpdir(), 'vfat-test-'));
+    const db = openDatabase(join(folder, 'test.sqlite'));
+    const store = createStore(db);
+    const now = Date.now();
+    store.writeProvider('demo', [{ id: 'pool:1', price: 1 }, { id: 'pool:2', price: 2 }], now);
+    const histories = store.historyMap(['pool:1', 'pool:2'], now - 3600000);
+    expect(histories.get('pool:1')[0].price).toBe(1);
+    expect(histories.get('pool:2')[0].price).toBe(2);
+    db.close();
+  });
 });
