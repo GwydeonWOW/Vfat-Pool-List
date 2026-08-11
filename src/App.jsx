@@ -20,6 +20,17 @@ const TABS = [
 
 const chainEntries = Object.entries(CHAINS);
 const PAGE_SIZE = 30;
+const FILTER_STORAGE_KEY = 'vfat_pool_filters_v1';
+const DEFAULT_CHAINS = [8453, 56, 43114, 137, 10, 146, 999, 143];
+
+function loadSavedFilters() {
+  try { return JSON.parse(localStorage.getItem(FILTER_STORAGE_KEY) || '{}'); }
+  catch { return {}; }
+}
+
+function savedNumber(saved, key, fallback) {
+  return Number.isFinite(Number(saved[key])) ? Number(saved[key]) : fallback;
+}
 
 // ── Scoring functions ──
 
@@ -61,6 +72,7 @@ const SCORERS = {
 
 export default function App() {
   const [authenticated, setAuthenticated] = useState(null);
+  const [savedFilters] = useState(loadSavedFilters);
 
   useEffect(() => { isAuthenticated().then(setAuthenticated); }, []);
 
@@ -78,7 +90,7 @@ export default function App() {
   const [extraPools, setExtraPools] = useState({ uniswap: [], orca: [], cetus: [] });
   const [favoriteIds, setFavoriteIds] = useState(new Set());
   const [compareIds, setCompareIds] = useState([]);
-  const [riskProfile, setRiskProfile] = useState(() => localStorage.getItem('risk_profile') || 'balanced');
+  const [riskProfile, setRiskProfile] = useState(() => savedFilters.riskProfile || localStorage.getItem('risk_profile') || 'balanced');
 
   // UI state
   const [loading, setLoading] = useState(false);
@@ -92,22 +104,33 @@ export default function App() {
   const [page, setPage] = useState(1);
 
   // VFat chain filter
-  const [selectedChains, setSelectedChains] = useState([8453, 56, 43114, 137, 10, 146, 999, 143]);
+  const [selectedChains, setSelectedChains] = useState(() => Array.isArray(savedFilters.selectedChains) ? savedFilters.selectedChains.map(Number) : DEFAULT_CHAINS);
 
   // Sort state
   const [sortKey, setSortKey] = useState('score');
   const [sortDir, setSortDir] = useState('desc');
 
   // Filters
-  const [minTvl, setMinTvl] = useState(15000);
-  const [maxTvl, setMaxTvl] = useState(10000000);
-  const [minApr, setMinApr] = useState(100);
-  const [minRange, setMinRange] = useState(0.5);
-  const [maxRange, setMaxRange] = useState(10);
-  const [minRewardsWeek, setMinRewardsWeek] = useState(0);
-  const [minNetDaily, setMinNetDaily] = useState(30);
-  const [yieldSource, setYieldSource] = useState('all');
-  const [showFilters, setShowFilters] = useState(false);
+  const [minTvl, setMinTvl] = useState(() => savedNumber(savedFilters, 'minTvl', 15000));
+  const [maxTvl, setMaxTvl] = useState(() => savedNumber(savedFilters, 'maxTvl', 10000000));
+  const [minApr, setMinApr] = useState(() => savedNumber(savedFilters, 'minApr', 100));
+  const [minRange, setMinRange] = useState(() => savedNumber(savedFilters, 'minRange', 0.5));
+  const [maxRange, setMaxRange] = useState(() => savedNumber(savedFilters, 'maxRange', 10));
+  const [minRewardsWeek, setMinRewardsWeek] = useState(() => savedNumber(savedFilters, 'minRewardsWeek', 0));
+  const [minNetDaily, setMinNetDaily] = useState(() => savedNumber(savedFilters, 'minNetDaily', 30));
+  const [yieldSource, setYieldSource] = useState(() => {
+    if (savedFilters.yieldSource === 'fees_only') return 'fees';
+    if (savedFilters.yieldSource === 'rewards_only') return 'rewards';
+    return savedFilters.yieldSource || 'all';
+  });
+  const [showFilters, setShowFilters] = useState(() => savedFilters.showFilters === true);
+
+  useEffect(() => {
+    localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({
+      selectedChains, minTvl, maxTvl, minApr, minRange, maxRange,
+      minRewardsWeek, minNetDaily, yieldSource, showFilters, riskProfile,
+    }));
+  }, [selectedChains, minTvl, maxTvl, minApr, minRange, maxRange, minRewardsWeek, minNetDaily, yieldSource, showFilters, riskProfile]);
 
   // Fetch last refresh time from backend
   const loadRefreshStatus = useCallback(async () => {
@@ -230,8 +253,8 @@ export default function App() {
     if (activeTab === 'vfat' && yieldSource !== 'all') {
       const hasFees = Number(p.feesWeek) > 0;
       const hasIncentives = Number(p.realRewardsWeek) > 0;
-      if (yieldSource === 'fees_only' && (!hasFees || hasIncentives)) return false;
-      if (yieldSource === 'rewards_only' && (!hasIncentives || hasFees)) return false;
+      if (yieldSource === 'fees' && !hasFees) return false;
+      if (yieldSource === 'rewards' && !hasIncentives) return false;
       if (yieldSource === 'both' && (!hasFees || !hasIncentives)) return false;
     }
     return true;
@@ -299,6 +322,13 @@ export default function App() {
       setError(err.message);
       throw err;
     }
+  };
+
+  const resetFilters = () => {
+    setSelectedChains(DEFAULT_CHAINS);
+    setMinTvl(15000); setMaxTvl(10000000); setMinApr(100);
+    setMinRange(0.5); setMaxRange(10); setMinRewardsWeek(0);
+    setMinNetDaily(30); setYieldSource('all'); setPage(1);
   };
   const toggleCompare = (poolId) => setCompareIds(prev => prev.includes(poolId) ? prev.filter(id => id !== poolId) : prev.length < 4 ? [...prev, poolId] : prev);
 
@@ -384,6 +414,9 @@ export default function App() {
       {/* Filters */}
       {showFilters && (
         <div className="filters">
+          <div className="filter-actions">
+            <button type="button" className="filter-reset-btn" onClick={resetFilters}>Reset filters</button>
+          </div>
           <div className="filter-row">
             <label>
               Min TVL: $
@@ -404,8 +437,8 @@ export default function App() {
                 Yield source:
                 <select value={yieldSource} onChange={(e) => { setYieldSource(e.target.value); setPage(1); }}>
                   <option value="all">All pools</option>
-                  <option value="fees_only">Fees only</option>
-                  <option value="rewards_only">Weekly rewards only</option>
+                  <option value="fees">Has fees</option>
+                  <option value="rewards">Has weekly rewards</option>
                   <option value="both">Fees + weekly rewards</option>
                 </select>
               </label>
