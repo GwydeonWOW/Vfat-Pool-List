@@ -16,6 +16,7 @@ const rows = [
   ['TVL', p => formatUsd(p.tvl)], ['Volume 24h', p => formatUsd(p.volume24h)],
   ['Volume/TVL', p => p.tvl ? (p.volume24h / p.tvl).toFixed(2) : '-'], ['Fee', p => `${p.feePct || 0}%`],
   ['Data quality', p => p.dataQuality || 'unknown'],
+  ['Token risk', p => p.tokenRisk?.warnings?.length ? p.tokenRisk.warnings.map(w => w.message).join(' | ') : 'No rapid move detected'],
 ];
 
 export default function CompareView({ poolIds, profile, onRemove }) {

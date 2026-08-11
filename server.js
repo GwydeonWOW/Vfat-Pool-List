@@ -9,6 +9,7 @@ import { rateLimit } from 'express-rate-limit';
 import { z } from 'zod';
 import { openDatabase, createStore } from './lib/db.js';
 import { calculateRiskScores } from './lib/risk.js';
+import { calculateTokenRisk } from './lib/token-risk.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -625,7 +626,10 @@ function enrichedCache(provider) {
   if (!cache) {
     return { timestamp: null, pools: [], stale: true, status: provider === 'uniswap' && !process.env.UNISWAP_API_KEY ? 'disabled' : 'empty' };
   }
-  const pools = cache.pools.map(pool => ({ ...pool, riskScores: calculateRiskScores(pool, store.history(pool.id, Date.now() - 30 * 86400000)) }));
+  const pools = cache.pools.map(pool => {
+    const history = store.history(pool.id, Date.now() - 30 * 86400000);
+    return { ...pool, riskScores: calculateRiskScores(pool, history), tokenRisk: calculateTokenRisk(pool, history) };
+  });
   return { ...cache, pools, stale: Date.now() - cache.timestamp > 15 * 60 * 1000 };
 }
 
@@ -635,7 +639,13 @@ app.get('/api/status', (req, res) => {
   const status = {};
   for (const provider of Object.keys(PROVIDERS)) {
     const cache = readCache(`${provider}.json`);
-    status[provider] = cache ? { pools: cache.pools.length, age: Math.round((Date.now() - cache.timestamp) / 1000), status: cache.status, error: cache.error } : null;
+    status[provider] = cache ? {
+      pools: cache.pools.length,
+      age: Math.round((Date.now() - cache.timestamp) / 1000),
+      timestamp: cache.timestamp,
+      status: cache.status,
+      error: cache.error,
+    } : null;
   }
   res.json(status);
 });
@@ -657,7 +667,9 @@ function currentPoolsById() {
   return new Map(pools.map(pool => [pool.id, pool]));
 }
 function enrichPool(pool) {
-  return pool ? { ...pool, riskScores: calculateRiskScores(pool, store.history(pool.id, Date.now() - 30 * 86400000)) } : null;
+  if (!pool) return null;
+  const history = store.history(pool.id, Date.now() - 30 * 86400000);
+  return { ...pool, riskScores: calculateRiskScores(pool, history), tokenRisk: calculateTokenRisk(pool, history) };
 }
 app.get('/api/watchlist', (_req, res) => {
   const byId = currentPoolsById();

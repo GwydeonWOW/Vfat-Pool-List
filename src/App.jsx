@@ -150,10 +150,12 @@ export default function App() {
 
   // ── Load from backend ──
 
-  const loadData = useCallback(async (tab) => {
+  const loadData = useCallback(async (tab, silent = false) => {
     if (['analysis', 'watchlist', 'compare'].includes(tab)) return;
-    setLoading(true);
-    setError(null);
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
     try {
       let pools;
       if (tab === 'vfat') {
@@ -172,9 +174,9 @@ export default function App() {
       }
       setLastUpdated(Date.now());
     } catch (err) {
-      setError(err.message);
+      if (!silent) setError(err.message);
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
@@ -197,6 +199,14 @@ export default function App() {
     setError(null);
     setPage(1);
     loadData(activeTab);
+  }, [activeTab, loadData]);
+
+  // The backend refreshes providers in the background. Keep the visible table
+  // synchronized with that cache without blanking it or requiring a page reload.
+  useEffect(() => {
+    if (['analysis', 'watchlist', 'compare'].includes(activeTab)) return undefined;
+    const interval = setInterval(() => loadData(activeTab, true), 30000);
+    return () => clearInterval(interval);
   }, [activeTab, loadData]);
 
   const loadFavorites = useCallback(async () => {
@@ -227,7 +237,7 @@ export default function App() {
 
   const rawPools = loading ? []
     : activeTab === 'vfat'
-      ? vfatPools.filter((p) => selectedChains.includes(p.chainId))
+      ? vfatPools.filter((p) => selectedChains.includes(Number(p.chainId)))
       : activeTab === 'raydium' ? raydiumPools
         : activeTab === 'turbos' ? turbosPools : (extraPools[activeTab] || []);
 
@@ -292,6 +302,27 @@ export default function App() {
 
   const filteredCount = sorted.length;
   const totalPools = rawPools.length;
+
+  const hiddenSearchMatch = searchLower && activeTab === 'vfat'
+    ? vfatPools.find((p) => {
+        const haystack = [p.pair, p.vfname, p.protocol, p.type, p.poolAddr, p.farmAddr].join(' ').toLowerCase();
+        return haystack.includes(searchLower) && !sorted.some((shown) => shown.id === p.id);
+      })
+    : null;
+  const hiddenSearchReasons = hiddenSearchMatch ? [
+    !selectedChains.includes(Number(hiddenSearchMatch.chainId)) && `chain ${CHAINS[hiddenSearchMatch.chainId]?.name || hiddenSearchMatch.chainId} is disabled`,
+    Number(hiddenSearchMatch.tvl) < minTvl && `TVL $${Number(hiddenSearchMatch.tvl).toFixed(2)} is below the minimum`,
+    Number(hiddenSearchMatch.tvl) > maxTvl && `TVL $${Number(hiddenSearchMatch.tvl).toFixed(2)} exceeds the maximum`,
+    Number(hiddenSearchMatch.apr) < effectiveMinApr && `APR ${Number(hiddenSearchMatch.apr).toFixed(2)}% is below the minimum`,
+    Number(hiddenSearchMatch.rangePct) < minRange && `tick interval ${Number(hiddenSearchMatch.rangePct).toFixed(2)}% is below the minimum`,
+    Number(hiddenSearchMatch.rangePct) > maxRange && `tick interval ${Number(hiddenSearchMatch.rangePct).toFixed(2)}% exceeds the maximum`,
+    Number(hiddenSearchMatch.rewardsWeek) < minRewardsWeek && `rewards/week $${Number(hiddenSearchMatch.rewardsWeek).toFixed(2)} are below the minimum`,
+    yieldSource === 'fees' && !(Number(hiddenSearchMatch.feesWeek) > 0) && 'it has no detected fees',
+    yieldSource === 'rewards' && !(Number(hiddenSearchMatch.realRewardsWeek) > 0) && 'it has no detected weekly incentives',
+    yieldSource === 'both' && (!(Number(hiddenSearchMatch.feesWeek) > 0) || !(Number(hiddenSearchMatch.realRewardsWeek) > 0)) && 'it does not have both fees and weekly incentives',
+    Number(hiddenSearchMatch.riskScores?.[riskProfile]?.estimatedNetDaily ?? 0) < minNetDaily
+      && `estimated net/day $${Number(hiddenSearchMatch.riskScores?.[riskProfile]?.estimatedNetDaily ?? 0).toFixed(2)} is below the minimum`,
+  ].filter(Boolean) : [];
 
   // Reset page when filters change
   const handleSearch = (val) => { setSearch(val); setPage(1); };
@@ -466,6 +497,12 @@ export default function App() {
       )}
 
       {error && <div className="error">Error: {error}</div>}
+
+      {hiddenSearchMatch && hiddenSearchReasons.length > 0 && (
+        <div className="filter-notice">
+          <strong>{hiddenSearchMatch.vfname || hiddenSearchMatch.pair}</strong> is hidden by the current filters: {hiddenSearchReasons.join('; ')}.
+        </div>
+      )}
 
       <div className="pool-count">
         {loading

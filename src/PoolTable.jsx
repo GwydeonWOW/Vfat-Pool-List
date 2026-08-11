@@ -44,6 +44,26 @@ function CopyAddr({ address, label }) {
   );
 }
 
+function TokenRisk({ pool }) {
+  const risk = pool.tokenRisk;
+  if (!risk || (!risk.warnings?.length && !risk.tokens?.some((token) => token.reviewUrl))) return null;
+  return (
+    <div className="token-risk" onClick={(event) => event.stopPropagation()}>
+      {risk.warnings?.map((warning) => (
+        <span key={warning.code} className={`token-risk-badge ${warning.level}`} title={warning.message}>
+          {warning.level === 'high' ? '⚠ High token risk' : '⚠ Token caution'}
+        </span>
+      ))}
+      {risk.tokens?.filter((token) => token.reviewUrl).map((token) => (
+        <a key={token.address} href={token.reviewUrl} target="_blank" rel="noreferrer" className="rugcheck-link">
+          Check {token.symbol} on {token.reviewProvider}
+        </a>
+      ))}
+      {risk.warnings?.map((warning) => <div key={`${warning.code}-text`} className="token-risk-text">{warning.message}</div>)}
+    </div>
+  );
+}
+
 // ── VFat cell renderer ──
 
 function renderVfatCell(pool, key) {
@@ -59,6 +79,7 @@ function renderVfatCell(pool, key) {
             <CopyAddr address={pool.farmAddr} label="Farm" />
             <CopyAddr address={pool.poolAddr} label="Pool" />
           </div>
+          <TokenRisk pool={pool} />
         </td>
       );
     case 'score':
@@ -112,6 +133,7 @@ function renderRaydiumCell(pool, key) {
           <div className="pool-name">{pool.pair}</div>
           <div className="pool-dex">Solana{pool.farmCount > 0 ? ' 🏆' : ''}</div>
           <div className="pool-addrs"><CopyAddr address={pool.poolAddr} label="Pool" /></div>
+          <TokenRisk pool={pool} />
         </td>
       );
     case 'score':
@@ -157,6 +179,7 @@ function renderTurbosCell(pool, key) {
           <div className="pool-name">{pool.pair}</div>
           <div className="pool-dex">Sui</div>
           <div className="pool-addrs"><CopyAddr address={pool.poolAddr} label="Pool" /></div>
+          <TokenRisk pool={pool} />
         </td>
       );
     case 'score':
