@@ -289,6 +289,15 @@ body {
   color: var(--blue);
 }
 
+.watchlist-group + .watchlist-group {
+  margin-top: 28px;
+}
+
+.watchlist-group h3 {
+  margin: 12px 0 8px;
+  color: var(--text-secondary);
+}
+
 .filter-row select {
   background: var(--bg-tertiary);
   color: var(--text-primary);

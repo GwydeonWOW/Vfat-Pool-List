@@ -90,7 +90,11 @@ export async function removeWatchlist(poolId) {
   if (!res.ok) throw new Error('Could not remove favorite');
   return res.json();
 }
-export async function comparePools(poolIds) { return fetchJSON(`${API_BASE}/compare?poolIds=${poolIds.map(encodeURIComponent).join(',')}`); }
+export async function comparePools(poolIds) {
+  const ids = Array.isArray(poolIds) ? poolIds.filter(Boolean).slice(0, 4) : [];
+  if (ids.length < 2) return { pools: [], missing: [] };
+  return fetchJSON(`${API_BASE}/compare?poolIds=${ids.map(encodeURIComponent).join(',')}`);
+}
 
 /**
  * Get backend cache status.

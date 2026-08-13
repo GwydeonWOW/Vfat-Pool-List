@@ -20,15 +20,24 @@ const rows = [
 ];
 
 export default function CompareView({ poolIds, profile, onRemove }) {
+  const safePoolIds = Array.isArray(poolIds) ? poolIds.filter(Boolean) : [];
   const [pools, setPools] = useState([]); const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
   useEffect(() => {
-    if (poolIds.length < 2) { setPools([]); return; }
-    comparePools(poolIds).then(data => setPools((data.pools || []).map(p => ({ ...p, _risk: p.riskScores?.[profile] })))).catch(e => setError(e.message));
+    let active = true;
+    if (safePoolIds.length < 2) { setPools([]); setError(''); setLoading(false); return () => { active = false; }; }
+    setLoading(true); setError('');
+    comparePools(safePoolIds)
+      .then(data => { if (active) setPools((data.pools || []).filter(Boolean).map(p => ({ ...p, _risk: p.riskScores?.[profile] }))); })
+      .catch(e => { if (active) { setPools([]); setError(e.message); } })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
   }, [poolIds, profile]);
-  if (poolIds.length < 2) return <div className="loading">Select between 2 and 4 pools using the Compare checkbox.</div>;
+  if (safePoolIds.length < 2) return <section className="compare-view"><h2>Pool comparison</h2><div className="loading">Select between 2 and 4 pools using the Compare checkbox.</div></section>;
+  if (loading) return <section className="compare-view"><h2>Pool comparison · {profile}</h2><div className="loading">Loading comparison...</div></section>;
   return <section className="compare-view"><h2>Pool comparison · {profile}</h2>{error && <div className="error">{error}</div>}
     <div className="pool-table-wrapper"><table className="pool-table compare-table"><thead><tr><th>Metric</th>{pools.map(p => <th key={p.id}>{p.pair}<button className="icon-action" onClick={() => onRemove(p.id)} aria-label={`Remove ${p.pair}`}>×</button><small>{p.protocol} · {p.chain || p.chainId}</small></th>)}</tr></thead>
       <tbody>{rows.map(([label, value]) => <tr key={label}><th>{label}</th>{pools.map(p => <td key={p.id}>{value(p)}</td>)}</tr>)}</tbody></table></div>
-    {pools.map(p => p._risk && <details key={p.id} className="risk-details"><summary>{p.pair}: opportunity breakdown</summary>{Object.entries(p._risk.components).map(([k,v]) => <span key={k}>{k}: {Number(v).toFixed(1)}</span>)}</details>)}
+    {pools.map(p => p._risk?.components && <details key={p.id} className="risk-details"><summary>{p.pair}: opportunity breakdown</summary>{Object.entries(p._risk.components).map(([k,v]) => <span key={k}>{k}: {Number(v).toFixed(1)}</span>)}</details>)}
   </section>;
 }
