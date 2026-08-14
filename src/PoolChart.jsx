@@ -1,12 +1,14 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createChart, CrosshairMode } from 'lightweight-charts';
 import { getTokenPriceHistory, getExoticToken, TIMEFRAMES, CHAINS, MAJOR_TOKENS } from './api';
+import { analyzeBestPriceRange } from './rangeAnalysis';
 
 export default function PoolChart({ pool }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
-  const [timeframe, setTimeframe] = useState('week');
+  const [timeframe, setTimeframe] = useState('day');
   const [priceData, setPriceData] = useState(null);
+  const [analysisData, setAnalysisData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [chartError, setChartError] = useState(false);
 
@@ -26,10 +28,13 @@ export default function PoolChart({ pool }) {
     setLoading(true);
     setChartError(false);
 
-    getTokenPriceHistory(pool.chainId, exoticToken.address, spanMap[timeframe])
-      .then((data) => {
+    Promise.all([
+      getTokenPriceHistory(pool.chainId, exoticToken.address, spanMap[timeframe]),
+      getTokenPriceHistory(pool.chainId, exoticToken.address, 24),
+    ]).then(([data, dailyData]) => {
         if (!cancelled) {
           setPriceData(data);
+          setAnalysisData(dailyData);
           setLoading(false);
         }
       })
@@ -42,6 +47,11 @@ export default function PoolChart({ pool }) {
 
     return () => { cancelled = true; };
   }, [pool.chainId, exoticToken?.address, timeframe]);
+
+  const bestRange = useMemo(
+    () => analyzeBestPriceRange(analysisData, Number(pool.rangePct) || 0.6, 24),
+    [analysisData, pool.rangePct],
+  );
 
   // Create / update chart
   useEffect(() => {
@@ -110,6 +120,12 @@ export default function PoolChart({ pool }) {
 
       lineSeries.setData(formattedData);
 
+      if (bestRange) {
+        lineSeries.createPriceLine({ price: bestRange.lower, color: '#bc8cff', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'Best 24h low' });
+        lineSeries.createPriceLine({ price: bestRange.upper, color: '#bc8cff', lineWidth: 2, lineStyle: 2, axisLabelVisible: true, title: 'Best 24h high' });
+        lineSeries.createPriceLine({ price: bestRange.center, color: '#d2a8ff', lineWidth: 1, lineStyle: 1, axisLabelVisible: false, title: 'Best 24h center' });
+      }
+
       // ── Tick range lines ──
       // tick = log1.0001(token1/token0), so 1.0001^tick = token1 per token0
       // We convert tick boundaries to USD using the current USD price as reference
@@ -173,7 +189,7 @@ export default function PoolChart({ pool }) {
       console.error('Chart render error:', err);
       setChartError(true);
     }
-  }, [priceData]);
+  }, [priceData, bestRange, pool.tickSpacing, pool.currentTick, pool.underlying, exoticToken]);
 
   const chainName = CHAINS[pool.chainId]?.name || `Chain ${pool.chainId}`;
 
@@ -260,6 +276,20 @@ export default function PoolChart({ pool }) {
           ))}
         </div>
       </div>
+
+      {bestRange && (
+        <div className="best-range-dashboard">
+          <div className={`range-stability ${bestRange.stability}`}>
+            {bestRange.stability === 'stable' ? 'Stable 24h range' : bestRange.stability === 'caution' ? 'Range caution' : 'Unstable range'}
+          </div>
+          <div><span>Best range</span><strong>{bestRange.widthPct.toFixed(2)}%</strong></div>
+          <div><span>Occupancy</span><strong>{bestRange.occupancyPct.toFixed(1)}%</strong></div>
+          <div><span>Exits / reentries</span><strong>{bestRange.exits} / {bestRange.reentries}</strong></div>
+          <div><span>Longest stay</span><strong>{bestRange.longestInsideHours.toFixed(1)}h</strong></div>
+          <div><span>Current status</span><strong className={bestRange.currentInside ? 'positive' : 'negative'}>{bestRange.currentInside ? `Inside · ${bestRange.currentInsideHours.toFixed(1)}h` : `Outside · ${bestRange.distancePct.toFixed(2)}%`}</strong></div>
+          <div className="best-range-values"><span>24h limits</span><strong>{bestRange.lower.toPrecision(6)} — {bestRange.upper.toPrecision(6)}</strong></div>
+        </div>
+      )}
 
       {loading ? (
         <div className="chart-loading">Loading price data...</div>

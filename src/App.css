@@ -872,6 +872,47 @@ body {
   }
 }
 
+.best-range-dashboard {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+  margin: 10px 0;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+}
+
+.best-range-dashboard > div:not(.range-stability) {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.best-range-dashboard span {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.best-range-dashboard strong {
+  font-size: 12px;
+}
+
+.range-stability {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px 8px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.range-stability.stable { color: var(--green); border: 1px solid var(--green); }
+.range-stability.caution { color: var(--orange); border: 1px solid var(--orange); }
+.range-stability.unstable { color: var(--red); border: 1px solid var(--red); }
+.best-range-values { min-width: 220px; }
+
 .icon-action {
   border: 0;
   background: transparent;
