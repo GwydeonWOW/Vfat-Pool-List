@@ -216,6 +216,18 @@ function renderTurbosCell(pool, key) {
   }
 }
 
+function renderUp33Cell(pool, key) {
+  switch (key) {
+    case 'pair': return <td><div className="pool-name">{pool.pair}</div><div className="pool-dex">Robinhood · UP33 CL</div><div className="pool-addrs"><CopyAddr address={pool.poolAddr} label="Pool" /></div><TokenRisk pool={pool} /></td>;
+    case 'score': return <td className={`score ${pool.score >= 100 ? 'positive' : pool.score >= 70 ? 'apr-mid' : 'negative'}`}><strong>{pool.score}</strong>{pool._risk && <div className="apr-detail">net {formatUsd(pool._risk.estimatedNetDaily)}/day{pool._risk.provisional ? ' · provisional' : ''}</div>}</td>;
+    case 'estimatedNetDaily': return <td className={pool.estimatedNetDaily >= 30 ? 'positive' : 'negative'}><strong>{formatUsd(pool.estimatedNetDaily || 0)}</strong></td>;
+    case 'apr': return <td className={aprColor(pool.apr)}><strong>{pool.apr}%</strong><div className="apr-detail">fees only · trailing 24h</div></td>;
+    case 'tvl': case 'volume24h': case 'fees24h': return <td className="tvl">{formatUsd(pool[key] || 0)}</td>;
+    case 'rangePct': return <td className="range">{pool.rangePct}%</td>;
+    default: return <td>{pool[key] != null ? pool[key] : '-'}</td>;
+  }
+}
+
 // ── Column definitions ──
 
 export const VFAT_COLUMNS = [
@@ -271,12 +283,27 @@ export const TURBOS_COLUMNS = [
   { key: 'tickSpacing', label: 'Tick', sortable: true },
 ];
 
+export const UP33_COLUMNS = [
+  { key: 'favorite', label: '★', sortable: false },
+  { key: 'compare', label: 'Compare', sortable: false },
+  { key: 'pair', label: 'Pool', sortable: true },
+  { key: 'score', label: 'Score', sortable: true },
+  { key: 'estimatedNetDaily', label: 'Net/day', sortable: true },
+  { key: 'apr', label: 'Fee APR', sortable: true },
+  { key: 'tvl', label: 'TVL', sortable: true },
+  { key: 'volume24h', label: 'Volume 24h', sortable: true },
+  { key: 'fees24h', label: 'Fees 24h', sortable: true },
+  { key: 'rangePct', label: 'Tick interval %', sortable: true },
+  { key: 'tickSpacing', label: 'Tick', sortable: true },
+];
+
 // ── Renderers map ──
 
 const RENDERERS = {
   vfat: renderVfatCell,
   raydium: renderRaydiumCell,
   turbos: renderTurbosCell,
+  up33: renderUp33Cell,
 };
 
 // ── PoolTable: PURE RENDERING COMPONENT ──

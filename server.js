@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { openDatabase, createStore } from './lib/db.js';
 import { calculateRiskScores } from './lib/risk.js';
 import { calculateTokenRisk } from './lib/token-risk.js';
+import { normalizeUp33Pool } from './lib/up33.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -117,7 +118,8 @@ const VFAT_CL_TYPES = [
   'AERO_SLIPSTREAM_GAUGE', 'PANCAKE_SWAP_V3', 'UNISWAP_V3',
   'UNISWAP_V4', 'THENA_V3', 'BMX_V4_FARM',
 ];
-const MAJOR_TOKEN_SYMBOLS = new Set(['WETH','ETH','USDC','USDT','WBTC','CBBTC','TBTC','BTCB','WBNB','BNB','DAI','USD1']);
+const UP33_CL_SUBGRAPH = process.env.UP33_CL_SUBGRAPH || 'https://api.goldsky.com/api/public/project_cmhef02640198x7p2cz2w70u8/subgraphs/up-robinhood-v3-mainnet/0.1.1/gn';
+const MAJOR_TOKEN_SYMBOLS = new Set(['WETH','ETH','USDC','USDT','WBTC','CBBTC','TBTC','BTCB','WBNB','BNB','DAI','USD1','USDG','USDE','SUSDE']);
 
 async function fetchVFatChain(chainId) {
   const farms = await fetchJSON(`${VFAT_BASE}?chainId=${chainId}`);
@@ -167,7 +169,7 @@ async function fetchVFatChain(chainId) {
     else if (ftype === 'BMX_V4_FARM') vfname = `${pair} (BMX V4)`;
 
     pools.push({
-      id: `${farm.chainId}-${farm.address}`,
+      id: Number(farm.chainId) === 4663 ? `${farm.chainId}-${farm.address}-${pool.address || farm.address}` : `${farm.chainId}-${farm.address}`,
       chainId: farm.chainId,
       protocol: farm.protocol?.name || '?',
       type: ftype,
@@ -207,7 +209,7 @@ async function fetchVFatChain(chainId) {
 }
 
 async function refreshVFat() {
-  const CHAINS = [8453, 56, 43114, 137, 10, 146, 999, 143];
+  const CHAINS = [8453, 56, 43114, 137, 10, 146, 999, 143, 4663];
   const allPools = [];
   for (const chainId of CHAINS) {
     try {
@@ -554,9 +556,59 @@ async function refreshUniswap() {
   return writeCache('uniswap.json', { timestamp: Date.now(), pools });
 }
 
+async function fetchGraphQL(url, query, variables = {}) {
+  const response = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, variables }),
+    signal: AbortSignal.timeout(30000),
+  });
+  if (!response.ok) throw new Error(`GraphQL error: ${response.status} ${response.statusText}`);
+  const payload = await response.json();
+  if (payload.errors?.length) throw new Error(`GraphQL error: ${payload.errors[0].message}`);
+  return payload.data;
+}
+
+async function refreshUp33() {
+  const poolQuery = `query Pools($skip: Int!) {
+    pools(first: 1000, skip: $skip, orderBy: totalValueLockedUSD, orderDirection: desc) {
+      id tickSpacing tick sqrtPrice totalValueLockedUSD
+      token0 { id symbol name decimals }
+      token1 { id symbol name decimals }
+    }
+  }`;
+  const hourQuery = `query Hours($skip: Int!, $since: Int!) {
+    poolHourDatas(first: 1000, skip: $skip, where: { periodStartUnix_gte: $since }, orderBy: periodStartUnix, orderDirection: desc) {
+      periodStartUnix volumeUSD feesUSD pool { id }
+    }
+  }`;
+  const rawPools = [];
+  for (let skip = 0; ; skip += 1000) {
+    const page = (await fetchGraphQL(UP33_CL_SUBGRAPH, poolQuery, { skip })).pools || [];
+    rawPools.push(...page);
+    if (page.length < 1000) break;
+  }
+  const hoursByPool = new Map();
+  const since = Math.floor(Date.now() / 1000) - 24 * 3600;
+  for (let skip = 0; ; skip += 1000) {
+    const page = (await fetchGraphQL(UP33_CL_SUBGRAPH, hourQuery, { skip, since })).poolHourDatas || [];
+    for (const row of page) {
+      const id = row.pool?.id;
+      if (!id) continue;
+      if (!hoursByPool.has(id)) hoursByPool.set(id, []);
+      hoursByPool.get(id).push(row);
+    }
+    if (page.length < 1000) break;
+  }
+  const pools = rawPools
+    .map((pool) => normalizeUp33Pool(pool, hoursByPool.get(pool.id) || []))
+    .filter((pool) => pool.tickSpacing > 0 && pool.tvl > 0);
+  return writeCache('up33.json', { timestamp: Date.now(), pools });
+}
+
 const PROVIDERS = {
   vfat: refreshVFat, raydium: refreshRaydium, turbos: refreshTurbos,
-  uniswap: refreshUniswap, orca: refreshOrca, cetus: refreshCetus,
+  uniswap: refreshUniswap, orca: refreshOrca, cetus: refreshCetus, up33: refreshUp33,
 };
 const refreshLocks = new Map();
 async function refreshProvider(provider) {

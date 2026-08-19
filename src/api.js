@@ -33,11 +33,13 @@ export const CHAINS = {
   146: { name: 'Sonic', defiLlamaChain: 'sonic', explorer: 'https://sonicscan.org' },
   999: { name: 'Hype', defiLlamaChain: 'hyperliquid', explorer: 'https://www.hyperscan.com' },
   143: { name: 'Monad', defiLlamaChain: 'monad', explorer: 'https://monadvision.com' },
+  4663: { name: 'Robinhood', defiLlamaChain: 'robinhood', explorer: 'https://robinhoodchain.blockscout.com' },
 };
 
 export const MAJOR_TOKENS = [
   'WETH', 'ETH', 'USDC', 'USDT', 'WBTC', 'cbBTC', 'tBTC', 'BTCB',
   'WBNB', 'BNB', 'DAI', 'USD1',
+  'USDG', 'USDe', 'sUSDe',
 ];
 
 /**

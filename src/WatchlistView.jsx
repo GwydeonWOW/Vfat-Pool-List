@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { fetchWatchlist } from './api';
-import PoolTable, { VFAT_COLUMNS, RAYDIUM_COLUMNS, TURBOS_COLUMNS } from './PoolTable';
+import PoolTable, { VFAT_COLUMNS, RAYDIUM_COLUMNS, TURBOS_COLUMNS, UP33_COLUMNS } from './PoolTable';
 
 const TABLE_CONFIG = {
   vfat: { label: 'VFat', source: 'vfat', columns: VFAT_COLUMNS },
   raydium: { label: 'Raydium', source: 'raydium', columns: RAYDIUM_COLUMNS },
   turbos: { label: 'Turbos Finance', source: 'turbos', columns: TURBOS_COLUMNS },
+  up33: { label: 'UP33', source: 'up33', columns: UP33_COLUMNS },
 };
 
 function tableConfig(pool) {

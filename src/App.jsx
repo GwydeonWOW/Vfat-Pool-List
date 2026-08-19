@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { CHAINS, fetchAllPools, fetchRaydiumPools, fetchTurbosPools, fetchProviderPools, refreshBackend, fetchStatus, setOnAuthFail, fetchWatchlist, addWatchlist, removeWatchlist } from './api';
-import PoolTable, { VFAT_COLUMNS, RAYDIUM_COLUMNS, TURBOS_COLUMNS } from './PoolTable';
+import PoolTable, { VFAT_COLUMNS, RAYDIUM_COLUMNS, TURBOS_COLUMNS, UP33_COLUMNS } from './PoolTable';
 import Login, { isAuthenticated, clearAuth } from './Auth';
 import PoolAnalysis from './PoolAnalysis';
 import WatchlistView from './WatchlistView';
@@ -13,6 +13,7 @@ const TABS = [
   { key: 'uniswap', label: 'Uniswap' },
   { key: 'orca', label: 'Orca' },
   { key: 'cetus', label: 'Cetus' },
+  { key: 'up33', label: 'UP33' },
   { key: 'watchlist', label: 'Watchlist' },
   { key: 'compare', label: 'Compare' },
   { key: 'analysis', label: 'Pool Analysis' },
@@ -21,7 +22,7 @@ const TABS = [
 const chainEntries = Object.entries(CHAINS);
 const PAGE_SIZE = 30;
 const FILTER_STORAGE_KEY = 'vfat_pool_filters_v1';
-const DEFAULT_CHAINS = [8453, 56, 43114, 137, 10, 146, 999, 143];
+const DEFAULT_CHAINS = [8453, 56, 43114, 137, 10, 146, 999, 143, 4663];
 
 function loadSavedFilters() {
   try { return JSON.parse(localStorage.getItem(FILTER_STORAGE_KEY) || '{}'); }
@@ -30,6 +31,15 @@ function loadSavedFilters() {
 
 function savedNumber(saved, key, fallback) {
   return Number.isFinite(Number(saved[key])) ? Number(saved[key]) : fallback;
+}
+
+function savedChains(saved) {
+  if (!Array.isArray(saved.selectedChains)) return DEFAULT_CHAINS;
+  const selected = saved.selectedChains.map(Number);
+  const known = Array.isArray(saved.knownChains) ? saved.knownChains.map(Number) : [];
+  // Select a newly introduced chain once, while preserving later user choices.
+  if (!known.includes(4663) && !selected.includes(4663)) selected.push(4663);
+  return selected;
 }
 
 // ── Scoring functions ──
@@ -106,7 +116,7 @@ export default function App() {
   const [page, setPage] = useState(1);
 
   // VFat chain filter
-  const [selectedChains, setSelectedChains] = useState(() => Array.isArray(savedFilters.selectedChains) ? savedFilters.selectedChains.map(Number) : DEFAULT_CHAINS);
+  const [selectedChains, setSelectedChains] = useState(() => savedChains(savedFilters));
 
   // Sort state
   const [sortKey, setSortKey] = useState('score');
@@ -129,7 +139,7 @@ export default function App() {
 
   useEffect(() => {
     localStorage.setItem(FILTER_STORAGE_KEY, JSON.stringify({
-      selectedChains, minTvl, maxTvl, minApr, minRange, maxRange,
+      selectedChains, knownChains: DEFAULT_CHAINS, minTvl, maxTvl, minApr, minRange, maxRange,
       minRewardsWeek, minNetDaily, yieldSource, showFilters, riskProfile,
     }));
   }, [selectedChains, minTvl, maxTvl, minApr, minRange, maxRange, minRewardsWeek, minNetDaily, yieldSource, showFilters, riskProfile]);
@@ -339,7 +349,8 @@ export default function App() {
   };
 
   const currentColumns = activeTab === 'vfat' ? VFAT_COLUMNS
-    : activeTab === 'raydium' ? RAYDIUM_COLUMNS : TURBOS_COLUMNS;
+    : activeTab === 'raydium' ? RAYDIUM_COLUMNS
+      : activeTab === 'up33' ? UP33_COLUMNS : TURBOS_COLUMNS;
 
   const toggleFavorite = async (poolId) => {
     const wasFavorite = favoriteIds.has(poolId);
