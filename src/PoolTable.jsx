@@ -78,6 +78,8 @@ function renderVfatCell(pool, key) {
           <div className="pool-addrs">
             <CopyAddr address={pool.farmAddr} label="Farm" />
             <CopyAddr address={pool.poolAddr} label="Pool" />
+            {pool.poolId && <CopyAddr address={pool.poolId} label="Pool ID" />}
+            {pool.vfatUrl && <a className="pool-source-link" href={pool.vfatUrl} target="_blank" rel="noreferrer" onClick={(event) => event.stopPropagation()}>VFat ↗</a>}
           </div>
           <TokenRisk pool={pool} />
         </td>

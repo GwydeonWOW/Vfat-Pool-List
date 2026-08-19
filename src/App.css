@@ -872,6 +872,16 @@ body {
   }
 }
 
+.pool-source-link {
+  display: inline-flex;
+  align-items: center;
+  color: var(--blue);
+  font-size: 10px;
+  text-decoration: none;
+}
+
+.pool-source-link:hover { text-decoration: underline; }
+
 .best-range-dashboard {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));

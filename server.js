@@ -12,6 +12,7 @@ import { openDatabase, createStore } from './lib/db.js';
 import { calculateRiskScores } from './lib/risk.js';
 import { calculateTokenRisk } from './lib/token-risk.js';
 import { normalizeUp33Pool } from './lib/up33.js';
+import { vfatPoolIdentity } from './lib/vfat.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -142,6 +143,7 @@ async function fetchVFatChain(chainId) {
     const pricedToken = underlying.find(u => !MAJOR_TOKEN_SYMBOLS.has(String(u.symbol || '').toUpperCase()) && Number(u.price) > 0)
       || underlying.find(u => Number(u.price) > 0);
     const rewardsWeek = snap.rewardsPerWeek || 0;
+    const identity = vfatPoolIdentity(farm);
 
     // Real rewards calc
     let realRewardsWeek = 0;
@@ -169,13 +171,16 @@ async function fetchVFatChain(chainId) {
     else if (ftype === 'BMX_V4_FARM') vfname = `${pair} (BMX V4)`;
 
     pools.push({
-      id: Number(farm.chainId) === 4663 ? `${farm.chainId}-${farm.address}-${pool.address || farm.address}` : `${farm.chainId}-${farm.address}`,
+      id: identity.id,
+      canonicalId: identity.id,
       chainId: farm.chainId,
       protocol: farm.protocol?.name || '?',
       type: ftype,
       pair, vfname,
       poolAddr: pool.address,
+      poolId: identity.poolId,
       farmAddr: farm.address,
+      vfatUrl: `https://info.vf.at/farm/${farm.chainId}/${farm.address}/${pool.address || farm.address}${identity.poolId ? `?poolHash=${identity.poolId}` : ''}`,
       tickSpacing, rangePct,
       currentTick: pool.tick || null,
       sqrtPrice: pool.sqrtPrice || null,
@@ -386,7 +391,7 @@ async function findPoolInfo(chainId, address) {
   if (vfat?.pools) {
     const found = vfat.pools.find(
       (p) => p.chainId === chainId &&
-        (p.poolAddr?.toLowerCase() === addr || p.farmAddr?.toLowerCase() === addr)
+        (p.poolAddr?.toLowerCase() === addr || p.farmAddr?.toLowerCase() === addr || p.poolId?.toLowerCase() === addr)
     );
     if (found) return found;
   }
@@ -396,8 +401,9 @@ async function findPoolInfo(chainId, address) {
     const farms = await fetchJSON(`${VFAT_BASE}?chainId=${chainId}`);
     for (const farm of farms) {
       const poolAddr = (farm.pool?.address || '').toLowerCase();
+      const poolId = (farm.pool?.poolId || '').toLowerCase();
       const farmAddr = (farm.address || '').toLowerCase();
-      if (poolAddr === addr || farmAddr === addr) {
+      if (poolAddr === addr || farmAddr === addr || poolId === addr) {
         const pool = farm.pool || {};
         const snap = farm.snapshot || {};
         const underlying = pool.underlying || [];
@@ -413,6 +419,7 @@ async function findPoolInfo(chainId, address) {
           rewardsWeek: snap.rewardsPerWeek || 0,
           inRangeRatio: snap.poolLiquidity > 0 ? ((snap.inRangeLiquidity || 0) / snap.poolLiquidity * 100) : 0,
           poolAddr: pool.address || addr,
+          poolId: pool.poolId || null,
           farmAddr: farm.address || addr,
           underlying: underlying.map((u) => ({ symbol: u.symbol || '', address: u.address || '' })),
         };
@@ -479,7 +486,7 @@ function normalizedPool(provider, raw) {
   const address = raw.poolAddr || raw.address || raw.id;
   return {
     ...raw,
-    id: `${provider}:${raw.chain || raw.chainId || 'unknown'}:${address}`,
+    id: raw.canonicalId || `${provider}:${raw.chain || raw.chainId || 'unknown'}:${address}`,
     provider,
     protocol: raw.protocol || provider[0].toUpperCase() + provider.slice(1),
     poolAddr: address,

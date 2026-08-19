@@ -263,7 +263,7 @@ export default function App() {
         const haystack = [
           p.pair, p.vfname, p.protocol, p.type,
           ...(p.underlying || []).map((u) => u.symbol),
-          p.poolAddr, p.farmAddr,
+          p.poolAddr, p.farmAddr, p.poolId,
         ].join(' ').toLowerCase();
         return haystack.includes(searchLower);
       })
@@ -321,7 +321,7 @@ export default function App() {
 
   const hiddenSearchMatch = searchLower && activeTab === 'vfat'
     ? vfatPools.find((p) => {
-        const haystack = [p.pair, p.vfname, p.protocol, p.type, p.poolAddr, p.farmAddr].join(' ').toLowerCase();
+        const haystack = [p.pair, p.vfname, p.protocol, p.type, p.poolAddr, p.farmAddr, p.poolId].join(' ').toLowerCase();
         return haystack.includes(searchLower) && !sorted.some((shown) => shown.id === p.id);
       })
     : null;
