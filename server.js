@@ -34,6 +34,9 @@ ensureDataDir();
 const db = openDatabase(join(DATA_DIR, 'app.sqlite'));
 const store = createStore(db);
 const SESSION_MS = 24 * 60 * 60 * 1000;
+const SESSION_TOUCH_INTERVAL = 10 * 60 * 1000;
+const preparedCaches = new Map();
+let preparedPoolsById = new Map();
 
 function passwordHash(password, salt = crypto.randomBytes(16).toString('hex')) {
   const derived = crypto.scryptSync(password, salt, 64).toString('hex');
@@ -71,12 +74,18 @@ function createSession() {
   return token;
 }
 function sessionToken(req) { return req.cookies.vfat_session || req.headers.authorization?.replace(/^Bearer\s+/i, ''); }
+const findSessionStmt = db.prepare('SELECT expires_at,last_seen_at FROM sessions WHERE token_hash=? AND expires_at>?');
+const touchSessionStmt = db.prepare('UPDATE sessions SET last_seen_at=?,expires_at=? WHERE token_hash=?');
 function validSession(req) {
   const token = sessionToken(req);
   if (!token) return false;
-  const row = db.prepare('SELECT * FROM sessions WHERE token_hash=? AND expires_at>?').get(hashToken(token), Date.now());
+  const now = Date.now();
+  const tokenHash = hashToken(token);
+  const row = findSessionStmt.get(tokenHash, now);
   if (!row) return false;
-  db.prepare('UPDATE sessions SET last_seen_at=?,expires_at=? WHERE token_hash=?').run(Date.now(), Date.now() + SESSION_MS, hashToken(token));
+  if (now - row.last_seen_at >= SESSION_TOUCH_INTERVAL) {
+    touchSessionStmt.run(now, now + SESSION_MS, tokenHash);
+  }
   return true;
 }
 
@@ -88,6 +97,8 @@ function ensureDataDir() {
 // ── JSON file cache ──
 function readCache(filename) {
   const provider = filename.replace(/\.json$/, '');
+  const prepared = preparedCaches.get(provider);
+  if (prepared) return prepared;
   const stored = store.readProvider(provider);
   if (stored) return stored;
   const filepath = join(DATA_DIR, filename);
@@ -103,7 +114,14 @@ function readCache(filename) {
 function writeCache(filename, data) {
   const provider = filename.replace(/\.json$/, '');
   const pools = (data.pools || []).map((pool) => normalizedPool(provider, pool));
-  return store.writeProvider(provider, pools, data.timestamp || Date.now());
+  const timestamp = data.timestamp || Date.now();
+  // Record the current snapshot first, then calculate every derived field once.
+  // Requests only ever see the previous complete version or this new complete one.
+  store.recordSnapshots(pools, timestamp);
+  const prepared = prepareProviderCache(provider, { timestamp, pools, status: 'ok', error: null });
+  store.writePreparedProvider(provider, prepared.pools, timestamp, prepared.status, prepared.error);
+  publishPreparedCache(provider, prepared);
+  return prepared;
 }
 
 // ── Fetch helper ──
@@ -624,7 +642,11 @@ async function refreshProvider(provider) {
   const previous = readCache(`${provider}.json`);
   const task = PROVIDERS[provider]().catch(err => {
     store.markProviderError(provider, err.message);
-    if (previous) return { ...previous, status: 'degraded', error: err.message };
+    if (previous) {
+      const degraded = { ...previous, status: 'degraded', error: err.message };
+      publishPreparedCache(provider, degraded);
+      return degraded;
+    }
     throw err;
   }).finally(() => refreshLocks.delete(provider));
   refreshLocks.set(provider, task);
@@ -682,29 +704,38 @@ app.use('/api', (req, res, next) => {
 
 // ── API routes ──
 
-const enrichedResponseCache = new Map();
-
-function enrichedCache(provider) {
-  const cache = readCache(`${provider}.json`);
+function prepareProviderCache(provider, cache) {
   if (!cache) {
     return { timestamp: null, pools: [], stale: true, status: provider === 'uniswap' && !process.env.UNISWAP_API_KEY ? 'disabled' : 'empty' };
   }
-  const memoized = enrichedResponseCache.get(provider);
-  if (memoized?.timestamp === cache.timestamp) return memoized.response;
-  // Raydium can exceed 5,000 pools. Fetching history once per pool blocks the
-  // Node event loop long enough for the reverse proxy to return 502 responses.
-  const raydiumHistory = provider === 'raydium'
-    ? store.historyMap(cache.pools.map((pool) => pool.id), Date.now() - 6.5 * 3600000)
-    : null;
+  // Seven days is the longest window used by scoring; token alerts only use 6.5h.
+  // Avoid loading the otherwise unused 30-day snapshot volume into memory.
+  const historyByPool = store.historyMap(cache.pools.map((pool) => pool.id), Date.now() - 7 * 86400000);
   const pools = cache.pools.map(pool => {
-    const history = provider === 'raydium'
-      ? (raydiumHistory.get(pool.id) || [])
-      : store.history(pool.id, Date.now() - 30 * 86400000);
+    const history = historyByPool.get(pool.id) || [];
     return { ...pool, riskScores: compactRiskScores(calculateRiskScores(pool, history)), tokenRisk: calculateTokenRisk(pool, history) };
   });
-  const response = { ...cache, pools, stale: Date.now() - cache.timestamp > 15 * 60 * 1000 };
-  enrichedResponseCache.set(provider, { timestamp: cache.timestamp, response });
-  return response;
+  return { ...cache, pools };
+}
+
+function publishPreparedCache(provider, cache) {
+  preparedCaches.set(provider, cache);
+  const nextIndex = new Map();
+  for (const [source, current] of preparedCaches) {
+    for (const pool of current.pools || []) nextIndex.set(pool.id, pool);
+  }
+  preparedPoolsById = nextIndex;
+}
+
+function hydratePreparedCaches() {
+  for (const provider of Object.keys(PROVIDERS)) {
+    const stored = store.readProvider(provider);
+    if (!stored) continue;
+    const alreadyPrepared = stored.pools.length === 0 || stored.pools.every((pool) => pool.riskScores && pool.tokenRisk);
+    const prepared = alreadyPrepared ? stored : prepareProviderCache(provider, stored);
+    if (!alreadyPrepared) store.writePreparedProvider(provider, prepared.pools, prepared.timestamp, prepared.status, prepared.error);
+    publishPreparedCache(provider, prepared);
+  }
 }
 
 function compactRiskScores(scores) {
@@ -720,18 +751,30 @@ function compactRiskScores(scores) {
   }]));
 }
 
-for (const provider of Object.keys(PROVIDERS)) app.get(`/api/${provider}`, (req, res) => res.json(enrichedCache(provider)));
+function sendPreparedProvider(req, res, provider) {
+  const cache = preparedCaches.get(provider);
+  const response = cache || { timestamp: null, pools: [], status: provider === 'uniswap' && !process.env.UNISWAP_API_KEY ? 'disabled' : 'empty' };
+  const etag = `"${provider}-${response.timestamp || 0}"`;
+  res.set('Cache-Control', 'private, no-cache');
+  res.set('ETag', etag);
+  if (req.headers['if-none-match'] === etag) return res.status(304).end();
+  return res.json({ ...response, stale: response.timestamp ? Date.now() - response.timestamp > REFRESH_INTERVAL : true });
+}
+
+for (const provider of Object.keys(PROVIDERS)) app.get(`/api/${provider}`, (req, res) => sendPreparedProvider(req, res, provider));
 
 app.get('/api/status', (req, res) => {
   const status = {};
   for (const provider of Object.keys(PROVIDERS)) {
-    const cache = readCache(`${provider}.json`);
-    status[provider] = cache ? {
-      pools: cache.pools.length,
-      age: Math.round((Date.now() - cache.timestamp) / 1000),
-      timestamp: cache.timestamp,
-      status: cache.status,
-      error: cache.error,
+    const cache = preparedCaches.get(provider);
+    const metadata = cache ? null : store.providerMetadata(provider);
+    const current = cache || metadata;
+    status[provider] = current ? {
+      pools: cache ? cache.pools.length : current.pool_count,
+      age: Math.round((Date.now() - current.timestamp) / 1000),
+      timestamp: current.timestamp,
+      status: current.status,
+      error: current.error,
     } : null;
   }
   res.json(status);
@@ -749,20 +792,10 @@ app.post('/api/providers/:source/refresh', expensiveLimiter, async (req, res) =>
 app.get('/api/refresh/:source', (_req, res) => res.status(405).json({ error: 'Use POST /api/providers/:source/refresh' }));
 
 const PoolIdBody = z.object({ poolId: z.string().min(3).max(300) });
-function currentPoolsById() {
-  const pools = Object.keys(PROVIDERS).flatMap(provider => readCache(`${provider}.json`)?.pools || []);
-  return new Map(pools.map(pool => [pool.id, pool]));
-}
-function enrichPool(pool) {
-  if (!pool) return null;
-  const history = store.history(pool.id, Date.now() - 30 * 86400000);
-  return { ...pool, riskScores: calculateRiskScores(pool, history), tokenRisk: calculateTokenRisk(pool, history) };
-}
 app.get('/api/watchlist', (_req, res) => {
-  const byId = currentPoolsById();
   res.json({ items: store.listWatchlist().map(item => {
-    const pool = byId.get(item.pool_id);
-    return { ...item, pool: enrichPool(pool), unavailable: !pool };
+    const pool = preparedPoolsById.get(item.pool_id);
+    return { ...item, pool: pool || null, unavailable: !pool };
   }) });
 });
 app.post('/api/watchlist', (req, res) => {
@@ -775,8 +808,7 @@ app.delete('/api/watchlist/:poolId', (req, res) => { store.removeWatchlist(req.p
 app.get('/api/compare', (req, res) => {
   const ids = String(req.query.poolIds || '').split(',').filter(Boolean);
   if (ids.length < 2 || ids.length > 4) return res.status(400).json({ error: 'Choose between 2 and 4 pools' });
-  const byId = currentPoolsById();
-  res.json({ pools: ids.map(id => enrichPool(byId.get(id))).filter(Boolean), missing: ids.filter(id => !byId.has(id)) });
+  res.json({ pools: ids.map(id => preparedPoolsById.get(id)).filter(Boolean), missing: ids.filter(id => !preparedPoolsById.has(id)) });
 });
 
 // Fetch a single sickle's positions with shorter timeout and retry
@@ -976,12 +1008,23 @@ const REFRESH_INTERVAL = 15 * 60 * 1000;
 async function refreshAll() {
   console.log('[Refresh] Starting background refresh...');
   const enabled = Object.keys(PROVIDERS).filter(provider => provider !== 'uniswap' || process.env.UNISWAP_API_KEY);
-  await Promise.allSettled(enabled.map(provider => refreshProvider(provider)));
+  // Limit external traffic and CPU/SQLite publication spikes.
+  const queue = [...enabled];
+  const workers = Array.from({ length: Math.min(2, queue.length) }, async () => {
+    while (queue.length) {
+      const provider = queue.shift();
+      try { await refreshProvider(provider); }
+      catch (err) { console.error(`[Refresh] ${provider} failed: ${err.message}`); }
+    }
+  });
+  await Promise.all(workers);
+  store.checkpoint();
   console.log('[Refresh] Done. Next refresh in 15 minutes.');
 }
 
-// Start server FIRST, then refresh data in background
+// Hydrate the complete, request-ready cache before accepting traffic.
 ensureDataDir();
+hydratePreparedCaches();
 app.listen(PORT, () => {
   console.log(`[Server] Running on port ${PORT}`);
 
@@ -990,14 +1033,16 @@ app.listen(PORT, () => {
   const caches = enabled.map(provider => [provider, readCache(`${provider}.json`)]);
   console.log(`[Init] Cached providers: ${caches.filter(([,cache]) => cache).length}/${enabled.length}`);
   const now = Date.now();
-  for (const [provider, cache] of caches) {
-    if (!cache || now - cache.timestamp > REFRESH_INTERVAL) {
-      refreshProvider(provider).catch(err => {
-        console.error(`[Init] ${provider} refresh failed; server remains available: ${err.message}`);
-      });
-    }
+  if (caches.some(([, cache]) => !cache || now - cache.timestamp > REFRESH_INTERVAL)) {
+    refreshAll().catch(err => {
+      console.error(`[Init] refresh failed; server remains available: ${err.message}`);
+    });
   }
 
   // Start periodic refresh
-  setInterval(refreshAll, REFRESH_INTERVAL);
+  setInterval(refreshAll, REFRESH_INTERVAL).unref();
+  setInterval(() => {
+    store.deleteExpiredSessions();
+    store.checkpoint();
+  }, 60 * 60 * 1000).unref();
 });

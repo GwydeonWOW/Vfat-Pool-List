@@ -15,7 +15,20 @@ describe('SQLite store', () => {
     store.writeProvider('demo', [{ id: 'demo:1', tvl: 10, apr: 2 }], 1000);
     store.addWatchlist('demo:1');
     expect(store.readProvider('demo').pools).toHaveLength(1);
+    expect(store.providerMetadata('demo')).toMatchObject({ provider: 'demo', timestamp: 1000, pool_count: 1 });
     expect(store.listWatchlist()[0].pool_id).toBe('demo:1');
+    db.close();
+  });
+
+  it('persists prepared pools without creating duplicate snapshots', () => {
+    folder = mkdtempSync(join(tmpdir(), 'vfat-test-'));
+    const db = openDatabase(join(folder, 'test.sqlite'));
+    const store = createStore(db);
+    const timestamp = Date.now();
+    store.recordSnapshots([{ id: 'pool:1', price: 1 }], timestamp);
+    store.writePreparedProvider('demo', [{ id: 'pool:1', price: 1, riskScores: { balanced: { total: 1 } } }], timestamp);
+    expect(store.readProvider('demo').pools[0].riskScores.balanced.total).toBe(1);
+    expect(db.prepare('SELECT count(*) AS count FROM pool_snapshots').get().count).toBe(1);
     db.close();
   });
 

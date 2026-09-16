@@ -11,9 +11,10 @@ export function getToken() {
   return true;
 }
 
-async function fetchJSON(url) {
+async function fetchJSON(url, options = {}) {
   const res = await fetch(url, {
     credentials: 'same-origin',
+    ...options,
   });
   if (res.status === 401) {
     if (onAuthFail) onAuthFail();
@@ -50,8 +51,8 @@ export async function fetchAllPools() {
   return data.pools || [];
 }
 
-export async function fetchProviderPools(provider) {
-  const data = await fetchJSON(`${API_BASE}/${provider}`);
+export async function fetchProviderPools(provider, options) {
+  const data = await fetchJSON(`${API_BASE}/${provider}`, options);
   return data;
 }
 

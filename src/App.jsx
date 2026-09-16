@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { CHAINS, fetchAllPools, fetchRaydiumPools, fetchTurbosPools, fetchProviderPools, refreshBackend, fetchStatus, setOnAuthFail, fetchWatchlist, addWatchlist, removeWatchlist } from './api';
+import { CHAINS, fetchProviderPools, refreshBackend, fetchStatus, setOnAuthFail, fetchWatchlist, addWatchlist, removeWatchlist } from './api';
 import PoolTable, { VFAT_COLUMNS, RAYDIUM_COLUMNS, TURBOS_COLUMNS, UP33_COLUMNS } from './PoolTable';
 import Login, { isAuthenticated, clearAuth } from './Auth';
 import PoolAnalysis from './PoolAnalysis';
@@ -110,7 +110,11 @@ export default function App() {
   const [refreshing, setRefreshing] = useState(false);
   const [refreshAgo, setRefreshAgo] = useState(null);
   const [cacheTimestamp, setCacheTimestamp] = useState(null);
+  const cacheTimestampProvider = useRef(null);
   const loadedCacheTimestamps = useRef({});
+  const providerDataCache = useRef({});
+  const inFlightLoads = useRef(new Map());
+  const activeLoadController = useRef(null);
 
   // Pagination
   const [page, setPage] = useState(1);
@@ -149,6 +153,7 @@ export default function App() {
     try {
       const status = await fetchStatus();
       const source = status[activeTab];
+      cacheTimestampProvider.current = activeTab;
       setRefreshAgo(source ? source.age : null);
       setCacheTimestamp(source?.timestamp || null);
     } catch { /* ignore */ }
@@ -163,42 +168,55 @@ export default function App() {
 
   // ── Load from backend ──
 
-  const loadData = useCallback(async (tab, silent = false) => {
+  const applyProviderData = useCallback((tab, pools) => {
+    if (tab === 'vfat') setVfatPools(pools);
+    else if (tab === 'raydium') setRaydiumPools(pools);
+    else if (tab === 'turbos') setTurbosPools(pools);
+    else setExtraPools(prev => ({ ...prev, [tab]: pools }));
+  }, []);
+
+  const loadData = useCallback(async (tab, silent = false, force = false) => {
     if (['analysis', 'watchlist', 'compare'].includes(tab)) return;
+    const cached = providerDataCache.current[tab];
+    if (cached && !force) {
+      applyProviderData(tab, cached.pools);
+      loadedCacheTimestamps.current[tab] = cached.timestamp;
+      return;
+    }
+    if (inFlightLoads.current.has(tab)) return inFlightLoads.current.get(tab);
     if (!silent) {
       setLoading(true);
       setError(null);
     }
-    try {
-      let pools;
-      if (tab === 'vfat') {
-        pools = await fetchAllPools();
-        setVfatPools(pools);
-      } else if (tab === 'raydium') {
-        pools = await fetchRaydiumPools();
-        setRaydiumPools(pools);
-      } else if (tab === 'turbos') {
-        pools = await fetchTurbosPools();
-        setTurbosPools(pools);
-      } else {
-        const data = await fetchProviderPools(tab);
-        pools = data.pools || [];
-        setExtraPools(prev => ({ ...prev, [tab]: pools }));
+    if (activeLoadController.current) activeLoadController.current.abort();
+    const controller = new AbortController();
+    activeLoadController.current = controller;
+    const request = (async () => {
+      try {
+        const data = await fetchProviderPools(tab, { signal: controller.signal });
+        const pools = data.pools || [];
+        providerDataCache.current[tab] = { pools, timestamp: data.timestamp || null };
+        loadedCacheTimestamps.current[tab] = data.timestamp || null;
+        applyProviderData(tab, pools);
+        setLastUpdated(Date.now());
+      } catch (err) {
+        if (err.name !== 'AbortError' && !silent) setError(err.message);
+      } finally {
+        inFlightLoads.current.delete(tab);
+        if (activeLoadController.current === controller) activeLoadController.current = null;
+        if (!silent) setLoading(false);
       }
-      setLastUpdated(Date.now());
-    } catch (err) {
-      if (!silent) setError(err.message);
-    } finally {
-      if (!silent) setLoading(false);
-    }
-  }, []);
+    })();
+    inFlightLoads.current.set(tab, request);
+    return request;
+  }, [applyProviderData]);
 
   const handleRefresh = async () => {
     if (['analysis', 'watchlist', 'compare'].includes(activeTab)) return;
     setRefreshing(true);
     try {
       await refreshBackend(activeTab);
-      await loadData(activeTab);
+      await loadData(activeTab, false, true);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -211,17 +229,20 @@ export default function App() {
     setSearch('');
     setError(null);
     setPage(1);
-    loadData(activeTab);
-  }, [activeTab, loadData]);
+    if (authenticated === true) loadData(activeTab);
+    return () => {
+      if (activeLoadController.current) activeLoadController.current.abort();
+    };
+  }, [activeTab, authenticated, loadData]);
 
   // Reload only when the backend cache version changes. Raydium can contain
   // thousands of pools, so polling the full payload every 30 seconds is wasteful.
   useEffect(() => {
     if (['analysis', 'watchlist', 'compare'].includes(activeTab)) return undefined;
+    if (cacheTimestampProvider.current !== activeTab) return undefined;
     if (!cacheTimestamp) return undefined;
     const previous = loadedCacheTimestamps.current[activeTab];
-    loadedCacheTimestamps.current[activeTab] = cacheTimestamp;
-    if (!previous || previous !== cacheTimestamp) loadData(activeTab, true);
+    if (previous && previous !== cacheTimestamp) loadData(activeTab, true, true);
     return undefined;
   }, [activeTab, cacheTimestamp, loadData]);
 
