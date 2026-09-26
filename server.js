@@ -37,6 +37,7 @@ const SESSION_MS = 24 * 60 * 60 * 1000;
 const SESSION_TOUCH_INTERVAL = 10 * 60 * 1000;
 const preparedCaches = new Map();
 let preparedPoolsById = new Map();
+const providerRefreshState = new Map();
 
 function passwordHash(password, salt = crypto.randomBytes(16).toString('hex')) {
   const derived = crypto.scryptSync(password, salt, 64).toString('hex');
@@ -114,6 +115,10 @@ function readCache(filename) {
 function writeCache(filename, data) {
   const provider = filename.replace(/\.json$/, '');
   const pools = (data.pools || []).map((pool) => normalizedPool(provider, pool));
+  const previous = preparedCaches.get(provider);
+  if (pools.length === 0 && previous?.pools?.length) {
+    throw new Error(`Refresh returned 0 pools; keeping ${previous.pools.length} cached pools`);
+  }
   const timestamp = data.timestamp || Date.now();
   // Record the current snapshot first, then calculate every derived field once.
   // Requests only ever see the previous complete version or this new complete one.
@@ -640,15 +645,23 @@ async function refreshProvider(provider) {
   if (!PROVIDERS[provider]) throw new Error('Unknown source');
   if (refreshLocks.has(provider)) return refreshLocks.get(provider);
   const previous = readCache(`${provider}.json`);
-  const task = PROVIDERS[provider]().catch(err => {
+  const state = providerRefreshState.get(provider) || {};
+  state.lastAttempt = Date.now();
+  state.refreshing = true;
+  providerRefreshState.set(provider, state);
+  const task = PROVIDERS[provider]().then(result => {
+    state.lastSuccess = result.timestamp;
+    state.lastError = null;
+    return result;
+  }).catch(err => {
+    state.lastError = err.message;
     store.markProviderError(provider, err.message);
-    if (previous) {
-      const degraded = { ...previous, status: 'degraded', error: err.message };
-      publishPreparedCache(provider, degraded);
-      return degraded;
-    }
+    if (previous) publishPreparedCache(provider, { ...previous, status: 'degraded', error: err.message });
     throw err;
-  }).finally(() => refreshLocks.delete(provider));
+  }).finally(() => {
+    state.refreshing = false;
+    refreshLocks.delete(provider);
+  });
   refreshLocks.set(provider, task);
   return task;
 }
@@ -769,12 +782,17 @@ app.get('/api/status', (req, res) => {
     const cache = preparedCaches.get(provider);
     const metadata = cache ? null : store.providerMetadata(provider);
     const current = cache || metadata;
+    const refresh = providerRefreshState.get(provider);
     status[provider] = current ? {
       pools: cache ? cache.pools.length : current.pool_count,
       age: Math.round((Date.now() - current.timestamp) / 1000),
       timestamp: current.timestamp,
       status: current.status,
       error: current.error,
+      refreshing: refresh?.refreshing === true,
+      lastAttempt: refresh?.lastAttempt || null,
+      lastSuccess: refresh?.lastSuccess || current.timestamp,
+      refreshError: refresh?.lastError || null,
     } : null;
   }
   res.json(status);
@@ -1008,18 +1026,29 @@ const REFRESH_INTERVAL = 15 * 60 * 1000;
 async function refreshAll() {
   console.log('[Refresh] Starting background refresh...');
   const enabled = Object.keys(PROVIDERS).filter(provider => provider !== 'uniswap' || process.env.UNISWAP_API_KEY);
-  // Limit external traffic and CPU/SQLite publication spikes.
-  const queue = [...enabled];
-  const workers = Array.from({ length: Math.min(2, queue.length) }, async () => {
-    while (queue.length) {
-      const provider = queue.shift();
-      try { await refreshProvider(provider); }
-      catch (err) { console.error(`[Refresh] ${provider} failed: ${err.message}`); }
+  // Process one provider at a time. Enrichment can be memory intensive and
+  // overlapping large providers caused refresh cycles to be killed before publish.
+  for (const provider of enabled) {
+    try {
+      await refreshProvider(provider);
+      console.log(`[Refresh] ${provider} published successfully`);
+    } catch (err) {
+      console.error(`[Refresh] ${provider} failed; cached data kept: ${err.message}`);
     }
-  });
-  await Promise.all(workers);
+  }
   store.checkpoint();
   console.log('[Refresh] Done. Next refresh in 15 minutes.');
+}
+
+let refreshTimer = null;
+function scheduleRefresh(delay = REFRESH_INTERVAL) {
+  if (refreshTimer) clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(async () => {
+    try { await refreshAll(); }
+    catch (err) { console.error(`[Refresh] Cycle failed: ${err.message}`); }
+    finally { scheduleRefresh(); }
+  }, delay);
+  refreshTimer.unref();
 }
 
 // Hydrate the complete, request-ready cache before accepting traffic.
@@ -1034,13 +1063,9 @@ app.listen(PORT, () => {
   console.log(`[Init] Cached providers: ${caches.filter(([,cache]) => cache).length}/${enabled.length}`);
   const now = Date.now();
   if (caches.some(([, cache]) => !cache || now - cache.timestamp > REFRESH_INTERVAL)) {
-    refreshAll().catch(err => {
-      console.error(`[Init] refresh failed; server remains available: ${err.message}`);
-    });
-  }
+    scheduleRefresh(1000);
+  } else scheduleRefresh();
 
-  // Start periodic refresh
-  setInterval(refreshAll, REFRESH_INTERVAL).unref();
   setInterval(() => {
     store.deleteExpiredSessions();
     store.checkpoint();

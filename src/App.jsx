@@ -109,6 +109,7 @@ export default function App() {
   const [lastUpdated, setLastUpdated] = useState(null);
   const [refreshing, setRefreshing] = useState(false);
   const [refreshAgo, setRefreshAgo] = useState(null);
+  const [refreshHealth, setRefreshHealth] = useState({ refreshing: false, error: null });
   const [cacheTimestamp, setCacheTimestamp] = useState(null);
   const cacheTimestampProvider = useRef(null);
   const loadedCacheTimestamps = useRef({});
@@ -155,6 +156,7 @@ export default function App() {
       const source = status[activeTab];
       cacheTimestampProvider.current = activeTab;
       setRefreshAgo(source ? source.age : null);
+      setRefreshHealth({ refreshing: source?.refreshing === true, error: source?.refreshError || source?.error || null });
       setCacheTimestamp(source?.timestamp || null);
     } catch { /* ignore */ }
   }, [activeTab]);
@@ -407,8 +409,8 @@ export default function App() {
         <h1>VFat Pool Analyzer</h1>
         <div className="controls">
           {refreshAgo != null && (
-            <span className="refresh-age">
-              Data: {refreshAgo < 60 ? `${refreshAgo}s` : `${Math.floor(refreshAgo/60)}m`} ago
+            <span className={`refresh-age${refreshHealth.error ? ' degraded' : ''}`} title={refreshHealth.error || undefined}>
+              {refreshHealth.refreshing ? 'Updating… · ' : ''}Data: {refreshAgo < 60 ? `${refreshAgo}s` : `${Math.floor(refreshAgo/60)}m`} ago{refreshHealth.error ? ' · refresh failed' : ''}
             </span>
           )}
           <select aria-label="Estimation scenario" value={riskProfile} onChange={e => { setRiskProfile(e.target.value); localStorage.setItem('risk_profile', e.target.value); }} className="chain-select">
